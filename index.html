@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DoomMan Phaser</title>
+    <!-- Optional CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        body { margin: 0; background-color: black; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { display: block; margin: auto; } /* Center canvas */
+    </style>
+</head>
+<body>
+    <!-- Phaser will create the canvas inside this div or directly in body -->
+    <div id="game-container"></div>
+
+    <script src="js/phaser.min.js"></script>
+    <script src="js/main.js"></script>
+    <!-- Include scene files AFTER main.js or handle loading differently -->
+    <script src="js/scenes/Preloader.js"></script>
+    <script src="js/scenes/GameScene.js"></script>
+    <script src="js/scenes/UIScene.js"></script>
+</body>
+</html>
