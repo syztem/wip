@@ -18,11 +18,11 @@
     <div id="weapon">WEAPON: Pulse</div>
     <div id="crosshair"></div>
     <div id="error"></div>
-    <script src="https://unpkg.com/three@0.168.0/build/three.min.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/ammo.js@0.0.10/builds/ammo.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js" crossorigin="anonymous"></script>
+    <script src="./three.min.js"></script>
+    <script src="./ammo.js"></script>
+    <script src="./gsap.min.js"></script>
     <script>
-        // Log CDN load status
+        // Log library load status
         console.log('Checking libraries...');
         console.log('Three.js:', typeof THREE !== 'undefined' ? 'Loaded' : 'Failed');
         console.log('Ammo.js:', typeof Ammo !== 'undefined' ? 'Loaded' : 'Failed');
@@ -30,7 +30,7 @@
 
         // Check if libraries loaded
         if (typeof THREE === 'undefined') {
-            showError('Three.js failed to load. Check network or try a different browser.');
+            showError('Three.js failed to load. Check ./three.min.js in root folder.');
             throw new Error('Three.js not loaded');
         }
 
@@ -40,9 +40,10 @@
             errorDiv.textContent = message;
         }
 
-        // Minimal fallback render if physics fails
+        // Fallback render if physics fails
         let scene, camera, renderer;
         function initFallback() {
+            console.log('Starting fallback render');
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x111111);
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -68,7 +69,7 @@
             animateFallback();
         }
 
-        // Proceed with full game if Ammo.js is available
+        // Full game with physics
         if (typeof Ammo !== 'undefined') {
             Ammo().then(function(AmmoLib) {
                 Ammo = AmmoLib;
@@ -84,6 +85,7 @@
 
                 function init() {
                     try {
+                        console.log('Initializing game');
                         // Scene setup
                         scene = new THREE.Scene();
                         scene.background = new THREE.Color(0x111111);
@@ -201,7 +203,7 @@
                 }
 
                 function spawnPlatforms() {
-                    for (let i = 0; i < 5; i++) {
+                    for (let i = 0; i < 3; i++) {
                         const size = 5;
                         const geo = new THREE.PlaneGeometry(size, size);
                         const mat = new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x005577 });
@@ -247,7 +249,7 @@
                     body.setLinearVelocity(new Ammo.btVector3((Math.random() - 0.5) * 5, 0, (Math.random() - 0.5) * 5));
                     world.addRigidBody(body);
                     objects.push({ mesh, body, type: 'target' });
-                    setTimeout(spawnTarget, 3000);
+                    setTimeout(spawnTarget, 4000);
                 }
 
                 function shoot() {
@@ -398,19 +400,19 @@
                         });
                         renderer.render(scene, camera);
                     } catch (e) {
-                        console.error('Render loop failed:', e);
                         showError('Render loop failed. Falling back to basic render.');
+                        console.error('Render loop failed:', e);
                         initFallback();
                     }
                 }
             }).catch(err => {
-                console.error('Ammo.js initialization failed:', err);
                 showError('Physics engine failed. Showing basic render.');
+                console.error('Ammo.js initialization failed:', err);
                 initFallback();
             });
         } else {
-            console.warn('Ammo.js not loaded. Starting fallback render.');
             showError('Physics unavailable. Showing basic scene.');
+            console.warn('Ammo.js not loaded. Starting fallback render.');
             initFallback();
         }
     </script>
