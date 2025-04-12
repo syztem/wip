@@ -100,10 +100,12 @@
     <div id="crosshair"></div>
     <div id="hud"></div>
 
-    <script src='./js/three.min.js'></script>
-    <script src='./jscannon.min.js'></script>
-    <script src='./jsgsap.min.js'></script>
-    <script src='./js/PointerLockControls.js'></script>
+    <!-- Updated Three.js to r169 and fixed paths -->
+    <script src="https://unpkg.com/three@0.169.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.169.0/examples/jsm/controls/PointerLockControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.11.4/dist/gsap.min.js"></script>
+
     <script>
         // Core variables
         let scene, camera, renderer, world, controls;
@@ -148,8 +150,8 @@
             // Physics world
             world = new CANNON.World();
             world.gravity.set(0, -9.82, 0);
-            world.broadphase = new CANNON.NaiveBroadphase(); // Changed for stability
-            world.solver.iterations = 10; // Improve solver accuracy
+            world.broadphase = new CANNON.NaiveBroadphase();
+            world.solver.iterations = 10;
             world.allowSleep = true;
 
             // Materials
@@ -170,7 +172,7 @@
                 material: playerMaterial,
                 shape: new CANNON.Sphere(playerRadius),
                 position: new CANNON.Vec3(0, 5, 15),
-                linearDamping: 0.9, // Increased for smoother movement
+                linearDamping: 0.9,
                 angularDamping: 1.0,
                 fixedRotation: true
             });
@@ -199,7 +201,7 @@
 
             // Ground
             const groundGeo = new THREE.PlaneGeometry(2000, 2000);
-            const groundMat = new THREE.MeshLambertMaterial({ color: 0xaaaaaa }); // Fallback color
+            const groundMat = new THREE.MeshLambertMaterial({ color: 0xaaaaaa });
             const groundMesh = new THREE.Mesh(groundGeo, groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
             groundMesh.receiveShadow = true;
@@ -222,12 +224,12 @@
             // Boxes
             const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
             const textures = [
-                new THREE.MeshStandardMaterial({ color: 0xaaaaaa }), // Fallback
+                new THREE.MeshStandardMaterial({ color: 0xaaaaaa }),
                 new THREE.MeshStandardMaterial({ color: 0xbbbbbb }),
                 new THREE.MeshStandardMaterial({ color: 0xcccccc })
             ];
 
-            for (let i = 0; i < 50; i++) { // Reduced for performance
+            for (let i = 0; i < 50; i++) {
                 const boxMaterial = textures[Math.floor(Math.random() * textures.length)];
                 const mesh = new THREE.Mesh(boxGeometry, boxMaterial);
                 const scaleX = 20;
@@ -258,7 +260,7 @@
                 objects.push({ mesh, body });
             }
 
-            createTrees(10); // Reduced for performance
+            createTrees(10);
 
             // Event listeners
             window.addEventListener('resize', () => {
@@ -279,8 +281,9 @@
                 if (document.pointerLockElement === document.body) {
                     controls.enabled = true;
                     instructions.style.display = 'none';
+                    pauseOverlay.style.display = 'none';
                     crosshair.style.display = 'block';
-                } else {
+                } else if (!paused) {
                     controls.enabled = false;
                     instructions.style.display = 'flex';
                     crosshair.style.display = 'none';
@@ -375,6 +378,7 @@
         function safelyRemoveObject({ mesh, body }) {
             if (mesh && mesh.parent) {
                 mesh.geometry.dispose();
+                if (mesh.material.map) mesh.material.map.dispose();
                 mesh.material.dispose();
                 scene.remove(mesh);
             }
@@ -389,6 +393,9 @@
                 paused = !paused;
                 pauseOverlay.style.display = paused ? 'flex' : 'none';
                 crosshair.style.display = paused ? 'none' : controls.enabled ? 'block' : 'none';
+                if (paused && controls.isLocked) {
+                    document.exitPointerLock();
+                }
                 return;
             }
             if (!controls.enabled || paused) return;
@@ -435,7 +442,7 @@
                 playerBody.velocity.x = velocity.x;
                 playerBody.velocity.z = velocity.z;
             } else {
-                playerBody.velocity.x *= 0.8; // Smooth stop
+                playerBody.velocity.x *= 0.8;
                 playerBody.velocity.z *= 0.8;
             }
 
