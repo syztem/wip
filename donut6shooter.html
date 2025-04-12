@@ -2,419 +2,592 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shooting Tower Arcade: Reborn</title>
+    <title>Shooter - Merged Physics (Improved)</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        canvas { display: block; }
-        #score { position: absolute; top: 20px; right: 20px; color: #0ff; font-family: monospace; font-size: 24px; }
-        #weapon { position: absolute; bottom: 20px; left: 20px; color: #0ff; font-family: monospace; font-size: 18px; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="2" fill="cyan" /><line x1="10" y1="2" x2="10" y2="6" stroke="cyan" /><line x1="10" y1="14" x2="10" y2="18" stroke="cyan" /><line x1="2" y1="10" x2="6" y2="10" stroke="cyan" /><line x1="14" y1="10" x2="18" y2="10" stroke="cyan" /></svg>') no-repeat center; transform: translate(-50%, -50%); pointer-events: none; }
-        #error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-family: monospace; font-size: 20px; text-align: center; display: none; }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+        }
+        canvas {
+            display: block;
+        }
+        #instructions {
+            width: 100%;
+            height: 100%;
+            user-select: none;
+            text-shadow: 1px 1px 1px #9E9E9E;
+            position: absolute;
+            top: 0;
+            left: 0;
+            background-color: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            text-align: center;
+            font-family: Arial;
+            font-size: 14px;
+            line-height: 24px;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #pause_overlay {
+            width: 100%;
+            height: 100%;
+            user-select: none;
+            text-shadow: 1px 1px 1px #9E9E9E;
+            position: absolute;
+            top: 0;
+            left: 0;
+            background-color: rgba(0,0,0,0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            text-align: center;
+            font-family: Arial;
+            font-size: 24px;
+            line-height: 34px;
+            z-index: 9;
+        }
+        #score {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 24px;
+            font-family: monospace;
+            z-index: 1;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="2" fill="white" /><line x1="10" y1="2" x2="10" y2="6" stroke="white" /><line x1="10" y1="14" x2="10" y2="18" stroke="white" /><line x1="2" y1="10" x2="6" y2="10" stroke="white" /><line x1="14" y1="10" x2="18" y2="10" stroke="white" /></svg>') no-repeat center;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            z-index: 1;
+        }
+        #hud {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            font-family: monospace;
+            z-index: 1;
+        }
     </style>
 </head>
 <body>
+    <div id="instructions">
+        <div>
+            <h1 style="font-weight: normal;">Tap to begin Adventure</h1>
+            <p>WASD to Move, SPACE to Jump, Mouse to Look, Click to Shoot</p>
+            <p>1: Pistol, 2: Cannon, 3: Scattershot</p>
+            <p>Press 'P' to pause/unpause</p>
+            <p>Press ESC to release mouse cursor</p>
+        </div>
+    </div>
+    <div id="pause_overlay">
+        <div>PAUSED<br>(Press 'P' to Resume)</div>
+    </div>
     <div id="score">SCORE: 0</div>
-    <div id="weapon">WEAPON: Pulse</div>
     <div id="crosshair"></div>
-    <div id="error"></div>
-    <script src="./js/three.min.js"></script>
-    <script src="./js/ammo.js"></script>
-    <script src="./js/gsap.min.js"></script>
+    <div id="hud"></div>
+
+    <script src='./js/three.min.js'></script>
+    <script src='./jscannon.min.js'></script>
+    <script src='./jsgsap.min.js'></script>
+    <script src='./js/PointerLockControls.js'></script>
     <script>
-        // Log library load status
-        console.log('Checking libraries...');
-        console.log('Three.js:', typeof THREE !== 'undefined' ? 'Loaded' : 'Failed');
-        console.log('Ammo.js:', typeof Ammo !== 'undefined' ? 'Loaded' : 'Failed');
-        console.log('GSAP:', typeof gsap !== 'undefined' ? 'Loaded' : 'Failed');
+        // Core variables
+        let scene, camera, renderer, world, controls;
+        let objects = [], score = 0, combo = 1, lastHitTime = 0;
+        let playerBody;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let weapon = 'pistol';
+        const moveSpeed = 10;
+        const jumpStrength = 8;
+        const playerHeight = 1.8;
+        const playerRadius = 0.5;
+        let groundMaterial, playerMaterial, objectMaterial, projectileMaterial;
+        const clock = new THREE.Clock();
+        let paused = false;
+        let muzzleFlashLight;
 
-        // Check if libraries loaded
-        if (typeof THREE === 'undefined') {
-            showError('Three.js failed to load. Check ./three.min.js in root folder.');
-            throw new Error('Three.js not loaded');
-        }
+        // DOM elements
+        const instructions = document.getElementById("instructions");
+        const pauseOverlay = document.getElementById("pause_overlay");
+        const crosshair = document.getElementById("crosshair");
+        const scoreElement = document.getElementById('score');
+        const hudElement = document.getElementById('hud');
 
-        function showError(message) {
-            const errorDiv = document.getElementById('error');
-            errorDiv.style.display = 'block';
-            errorDiv.textContent = message;
-        }
-
-        // Fallback render if physics fails
-        let scene, camera, renderer;
-        function initFallback() {
-            console.log('Starting fallback render');
+        // Initialize game
+        function init() {
+            // Scene setup
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 50, 600);
+
+            // Camera setup
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 10);
+
+            // Renderer setup
             renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             document.body.appendChild(renderer.domElement);
 
-            // Add ground
-            const groundGeo = new THREE.PlaneGeometry(100, 100);
-            const groundMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            // Physics world
+            world = new CANNON.World();
+            world.gravity.set(0, -9.82, 0);
+            world.broadphase = new CANNON.NaiveBroadphase(); // Changed for stability
+            world.solver.iterations = 10; // Improve solver accuracy
+            world.allowSleep = true;
+
+            // Materials
+            groundMaterial = new CANNON.Material("groundMaterial");
+            playerMaterial = new CANNON.Material("playerMaterial");
+            objectMaterial = new CANNON.Material("objectMaterial");
+            projectileMaterial = new CANNON.Material("projectileMaterial");
+
+            world.addContactMaterial(new CANNON.ContactMaterial(groundMaterial, playerMaterial, { friction: 0.3, restitution: 0.1 }));
+            world.addContactMaterial(new CANNON.ContactMaterial(objectMaterial, groundMaterial, { friction: 0.6, restitution: 0.4 }));
+            world.addContactMaterial(new CANNON.ContactMaterial(objectMaterial, objectMaterial, { friction: 0.5, restitution: 0.4 }));
+            world.addContactMaterial(new CANNON.ContactMaterial(projectileMaterial, objectMaterial, { friction: 0.1, restitution: 0.5 }));
+            world.addContactMaterial(new CANNON.ContactMaterial(projectileMaterial, groundMaterial, { friction: 0.3, restitution: 0.7 }));
+
+            // Player physics
+            playerBody = new CANNON.Body({
+                mass: 70,
+                material: playerMaterial,
+                shape: new CANNON.Sphere(playerRadius),
+                position: new CANNON.Vec3(0, 5, 15),
+                linearDamping: 0.9, // Increased for smoother movement
+                angularDamping: 1.0,
+                fixedRotation: true
+            });
+            world.addBody(playerBody);
+
+            // Controls
+            controls = new THREE.PointerLockControls(camera, renderer.domElement);
+            scene.add(controls.getObject());
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0xcccccc, 0.5));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+            dirLight.position.set(-1, 1.75, 1).multiplyScalar(50);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.set(2048, 2048);
+            dirLight.shadow.camera.left = -150;
+            dirLight.shadow.camera.right = 150;
+            dirLight.shadow.camera.top = 150;
+            dirLight.shadow.camera.bottom = -150;
+            dirLight.shadow.camera.far = 800;
+            scene.add(dirLight);
+
+            // Muzzle flash
+            muzzleFlashLight = new THREE.PointLight(0xffcc66, 0, 50, 2);
+            scene.add(muzzleFlashLight);
+
+            // Ground
+            const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+            const groundMat = new THREE.MeshLambertMaterial({ color: 0xaaaaaa }); // Fallback color
             const groundMesh = new THREE.Mesh(groundGeo, groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
+            groundMesh.receiveShadow = true;
             scene.add(groundMesh);
 
-            // Add light
-            scene.add(new THREE.AmbientLight(0x404040));
+            const groundBody = new CANNON.Body({ mass: 0, material: groundMaterial });
+            groundBody.addShape(new CANNON.Plane());
+            groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+            world.addBody(groundBody);
 
-            function animateFallback() {
-                requestAnimationFrame(animateFallback);
-                renderer.render(scene, camera);
+            // Load textures with fallback
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load('floor.jpg', (tex) => {
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                tex.repeat.set(100, 100);
+                groundMat.map = tex;
+                groundMat.needsUpdate = true;
+            }, undefined, () => console.warn("Using fallback ground color"));
+
+            // Boxes
+            const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+            const textures = [
+                new THREE.MeshStandardMaterial({ color: 0xaaaaaa }), // Fallback
+                new THREE.MeshStandardMaterial({ color: 0xbbbbbb }),
+                new THREE.MeshStandardMaterial({ color: 0xcccccc })
+            ];
+
+            for (let i = 0; i < 50; i++) { // Reduced for performance
+                const boxMaterial = textures[Math.floor(Math.random() * textures.length)];
+                const mesh = new THREE.Mesh(boxGeometry, boxMaterial);
+                const scaleX = 20;
+                const scaleY = Math.random() * 80 + 10;
+                const scaleZ = 20;
+                mesh.scale.set(scaleX, scaleY, scaleZ);
+
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 100 + Math.random() * 600;
+                mesh.position.set(
+                    Math.cos(angle) * radius,
+                    scaleY / 2 + 0.1,
+                    Math.sin(angle) * radius
+                );
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                scene.add(mesh);
+
+                const shape = new CANNON.Box(new CANNON.Vec3(scaleX / 2, scaleY / 2, scaleZ / 2));
+                const body = new CANNON.Body({
+                    mass: 50 * (scaleY / 80),
+                    material: objectMaterial,
+                    position: new CANNON.Vec3(mesh.position.x, mesh.position.y, mesh.position.z)
+                });
+                body.addShape(shape);
+                world.addBody(body);
+                addDestructionListener(body, mesh, 8, 15, 10);
+                objects.push({ mesh, body });
             }
-            animateFallback();
-        }
 
-        // Full game with physics
-        if (typeof Ammo !== 'undefined') {
-            Ammo().then(function(AmmoLib) {
-                Ammo = AmmoLib;
-                console.log('Ammo.js initialized');
+            createTrees(10); // Reduced for performance
 
-                // Core variables
-                let world, player, objects = [];
-                let score = 0, combo = 1, lastHitTime = 0, weapon = 'pulse';
-                let moveTarget = null, isJumping = false;
-                const moveSpeed = 8, jumpStrength = 5;
-
-                init();
-
-                function init() {
-                    try {
-                        console.log('Initializing game');
-                        // Scene setup
-                        scene = new THREE.Scene();
-                        scene.background = new THREE.Color(0x111111);
-
-                        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-                        camera.position.set(0, 2, 10);
-
-                        renderer = new THREE.WebGLRenderer({ antialias: true });
-                        renderer.setSize(window.innerWidth, window.innerHeight);
-                        renderer.shadowMap.enabled = true;
-                        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-                        document.body.appendChild(renderer.domElement);
-
-                        // Physics setup
-                        const collisionConfig = new Ammo.btDefaultCollisionConfiguration();
-                        const dispatcher = new Ammo.btCollisionDispatcher(collisionConfig);
-                        const broadphase = new Ammo.btDbvtBroadphase();
-                        const solver = new Ammo.btSequentialImpulseConstraintSolver();
-                        world = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
-                        world.setGravity(new Ammo.btVector3(0, -9.82, 0));
-
-                        // Player
-                        const playerShape = new Ammo.btSphereShape(0.5);
-                        const playerTransform = new Ammo.btTransform();
-                        playerTransform.setIdentity();
-                        playerTransform.setOrigin(new Ammo.btVector3(0, 2, 10));
-                        const playerMotionState = new Ammo.btDefaultMotionState(playerTransform);
-                        const playerInertia = new Ammo.btVector3(0, 0, 0);
-                        playerShape.calculateLocalInertia(5, playerInertia);
-                        const playerBody = new Ammo.btRigidBody(
-                            new Ammo.btRigidBodyConstructionInfo(5, playerMotionState, playerShape, playerInertia)
-                        );
-                        playerBody.setDamping(0.9, 0.9);
-                        world.addRigidBody(playerBody);
-                        player = { body: playerBody, mesh: new THREE.Object3D() };
-                        scene.add(player.mesh);
-
-                        // Lights
-                        scene.add(new THREE.AmbientLight(0x404040, 0.5));
-                        const dirLight = new THREE.DirectionalLight(0x00aaff, 0.7);
-                        dirLight.position.set(10, 20, -5);
-                        dirLight.castShadow = true;
-                        dirLight.shadow.mapSize.set(512, 512);
-                        scene.add(dirLight);
-
-                        // Ground
-                        const groundGeo = new THREE.PlaneGeometry(100, 100);
-                        const groundMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-                        const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-                        groundMesh.rotation.x = -Math.PI / 2;
-                        groundMesh.receiveShadow = true;
-                        scene.add(groundMesh);
-                        const groundShape = new Ammo.btStaticPlaneShape(new Ammo.btVector3(0, 1, 0), 0);
-                        const groundTransform = new Ammo.btTransform();
-                        groundTransform.setIdentity();
-                        const groundMotionState = new Ammo.btDefaultMotionState(groundTransform);
-                        const groundBody = new Ammo.btRigidBody(
-                            new Ammo.btRigidBodyConstructionInfo(0, groundMotionState, groundShape)
-                        );
-                        world.addRigidBody(groundBody);
-
-                        // Platforms and targets
-                        spawnPlatforms();
-                        spawnTarget();
-
-                        // Events
-                        window.addEventListener('resize', () => {
-                            camera.aspect = window.innerWidth / window.innerHeight;
-                            camera.updateProjectionMatrix();
-                            renderer.setSize(window.innerWidth, window.innerHeight);
-                        });
-                        window.addEventListener('mousedown', handleMouseDown);
-                        window.addEventListener('touchstart', handleTouchStart);
-                        window.addEventListener('keydown', handleKeyDown);
-                        window.addEventListener('mousemove', handleMouseMove);
-                        window.addEventListener('contextmenu', (e) => e.preventDefault());
-
-                        animate();
-                    } catch (e) {
-                        showError('Game initialization failed. Falling back to basic render.');
-                        console.error('Init failed:', e);
-                        initFallback();
-                    }
-                }
-
-                function handleMouseDown(e) {
-                    if (e.button === 0) shoot();
-                    else if (e.button === 2) moveTarget = getGroundPoint(e);
-                }
-
-                function handleTouchStart(e) {
-                    e.preventDefault();
-                    if (e.touches.length === 1) shoot();
-                    else if (e.touches.length === 2) moveTarget = getGroundPoint(e.touches[0]);
-                }
-
-                function handleKeyDown(e) {
-                    if (e.code === 'Space' && !isJumping) {
-                        player.body.setLinearVelocity(new Ammo.btVector3(0, jumpStrength, 0));
-                        isJumping = true;
-                    }
-                    if (e.code === 'Digit1') { weapon = 'pulse'; updateWeapon(); }
-                    if (e.code === 'Digit2') { weapon = 'void'; updateWeapon(); }
-                    if (e.code === 'Digit3') { weapon = 'prism'; updateWeapon(); }
-                }
-
-                function handleMouseMove(e) {
-                    const mouse = new THREE.Vector2(
-                        (e.clientX / window.innerWidth) * 2 - 1,
-                        -(e.clientY / window.innerHeight) * 2 + 1
-                    );
-                    const raycaster = new THREE.Raycaster();
-                    raycaster.setFromCamera(mouse, camera);
-                    camera.lookAt(raycaster.ray.direction.clone().multiplyScalar(100).add(camera.position));
-                }
-
-                function spawnPlatforms() {
-                    for (let i = 0; i < 3; i++) {
-                        const size = 5;
-                        const geo = new THREE.PlaneGeometry(size, size);
-                        const mat = new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x005577 });
-                        const mesh = new THREE.Mesh(geo, mat);
-                        mesh.rotation.x = -Math.PI / 2;
-                        mesh.position.set(
-                            (Math.random() - 0.5) * 50,
-                            Math.random() * 5 + 2,
-                            (Math.random() - 0.5) * 50
-                        );
-                        mesh.castShadow = true;
-                        scene.add(mesh);
-                        const shape = new Ammo.btBoxShape(new Ammo.btVector3(size / 2, 0.1, size / 2));
-                        const transform = new Ammo.btTransform();
-                        transform.setIdentity();
-                        transform.setOrigin(new Ammo.btVector3(mesh.position.x, mesh.position.y, mesh.position.z));
-                        const body = new Ammo.btRigidBody(
-                            new Ammo.btRigidBodyConstructionInfo(0, new Ammo.btDefaultMotionState(transform), shape)
-                        );
-                        world.addRigidBody(body);
-                        objects.push({ mesh, body });
-                    }
-                }
-
-                function spawnTarget() {
-                    const geo = new THREE.IcosahedronGeometry(1, 0);
-                    const mat = new THREE.MeshStandardMaterial({ color: 0xff00ff, emissive: 0x770077 });
-                    const mesh = new THREE.Mesh(geo, mat);
-                    mesh.position.set(
-                        (Math.random() - 0.5) * 40,
-                        Math.random() * 10 + 5,
-                        (Math.random() - 0.5) * 40
-                    );
-                    mesh.castShadow = true;
-                    scene.add(mesh);
-                    const shape = new Ammo.btSphereShape(1);
-                    const transform = new Ammo.btTransform();
-                    transform.setIdentity();
-                    transform.setOrigin(new Ammo.btVector3(mesh.position.x, mesh.position.y, mesh.position.z));
-                    const body = new Ammo.btRigidBody(
-                        new Ammo.btRigidBodyConstructionInfo(2, new Ammo.btDefaultMotionState(transform), shape)
-                    );
-                    body.setLinearVelocity(new Ammo.btVector3((Math.random() - 0.5) * 5, 0, (Math.random() - 0.5) * 5));
-                    world.addRigidBody(body);
-                    objects.push({ mesh, body, type: 'target' });
-                    setTimeout(spawnTarget, 4000);
-                }
-
-                function shoot() {
-                    let radius = 0.2, mass = 1, speed = 50, count = 1, color = 0xff4444, geoType = 'sphere';
-                    if (weapon === 'void') {
-                        radius = 0.5; mass = 5; speed = 30; color = 0x4444ff; geoType = 'box';
-                    } else if (weapon === 'prism') {
-                        radius = 0.1; mass = 0.5; count = 5; color = 0xffaa00; geoType = 'triangle';
-                    }
-
-                    for (let i = 0; i < count; i++) {
-                        const geo = geoType === 'sphere' ? new THREE.SphereGeometry(radius, 16, 16) :
-                                    geoType === 'box' ? new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2) :
-                                    new THREE.BufferGeometry().setFromPoints([
-                                        new THREE.Vector3(0, radius, 0),
-                                        new THREE.Vector3(-radius, -radius, 0),
-                                        new THREE.Vector3(radius, -radius, 0)
-                                    ]);
-                        const mat = new THREE.MeshStandardMaterial({ color });
-                        const mesh = new THREE.Mesh(geo, mat);
-                        mesh.position.copy(camera.position);
-                        scene.add(mesh);
-                        const shape = new Ammo.btSphereShape(radius);
-                        const transform = new Ammo.btTransform();
-                        transform.setIdentity();
-                        transform.setOrigin(new Ammo.btVector3(mesh.position.x, mesh.position.y, mesh.position.z));
-                        const body = new Ammo.btRigidBody(
-                            new Ammo.btRigidBodyConstructionInfo(mass, new Ammo.btDefaultMotionState(transform), shape)
-                        );
-                        const dir = camera.getWorldDirection(new THREE.Vector3());
-                        if (weapon === 'prism') {
-                            dir.x += (Math.random() - 0.5) * 0.2;
-                            dir.y += (Math.random() - 0.5) * 0.2;
-                            dir.z += (Math.random() - 0.5) * 0.2;
-                            dir.normalize();
-                        }
-                        body.setLinearVelocity(new Ammo.btVector3(dir.x * speed, dir.y * speed, dir.z * speed));
-                        world.addRigidBody(body);
-                        objects.push({ mesh, body, type: 'projectile' });
-                    }
-                    gsap.to(camera.rotation, { x: '-=0.05', duration: 0.1, yoyo: true, repeat: 1 });
-                }
-
-                function getGroundPoint(event) {
-                    const clientX = event.clientX || (event.touches && event.touches[0].clientX);
-                    const clientY = event.clientY || (event.touches && event.touches[0].clientY);
-                    if (!clientX || !clientY) return null;
-                    const mouse = new THREE.Vector2(
-                        (clientX / window.innerWidth) * 2 - 1,
-                        -(clientY / window.innerHeight) * 2 + 1
-                    );
-                    const raycaster = new THREE.Raycaster();
-                    raycaster.setFromCamera(mouse, camera);
-                    const intersects = raycaster.intersectObjects(scene.children.filter(o => o.isMesh && o !== player.mesh));
-                    return intersects.length ? intersects[0].point : null;
-                }
-
-                function updateWeapon() {
-                    document.getElementById('weapon').textContent = `WEAPON: ${weapon.charAt(0).toUpperCase() + weapon.slice(1)}`;
-                }
-
-                function updatePlayer() {
-                    const transform = player.body.getWorldTransform();
-                    const pos = transform.getOrigin();
-                    if (moveTarget) {
-                        const dir = new THREE.Vector3(moveTarget.x - pos.x(), 0, moveTarget.z - pos.z());
-                        dir.normalize().multiplyScalar(moveSpeed);
-                        player.body.setLinearVelocity(new Ammo.btVector3(dir.x, player.body.getLinearVelocity().y(), dir.z));
-                    }
-                    camera.position.set(pos.x(), pos.y() + 1.5, pos.z());
-                    if (pos.y() <= 2 && player.body.getLinearVelocity().y() <= 0) isJumping = false;
-                }
-
-                function handleCollisions() {
-                    const dispatcher = world.getDispatcher();
-                    const numManifolds = dispatcher.getNumManifolds();
-                    for (let i = 0; i < numManifolds; i++) {
-                        const manifold = dispatcher.getManifoldByIndexInternal(i);
-                        const body0 = Ammo.castObject(manifold.getBody0(), Ammo.btRigidBody);
-                        const body1 = Ammo.castObject(manifold.getBody1(), Ammo.btRigidBody);
-                        const obj0 = objects.find(o => o.body === body0);
-                        const obj1 = objects.find(o => o.body === body1);
-                        if (obj0 && obj1 && ((obj0.type === 'projectile' && obj1.type === 'target') || (obj1.type === 'projectile' && obj0.type === 'target'))) {
-                            const target = obj0.type === 'target' ? obj0 : obj1;
-                            const now = performance.now();
-                            if (now - lastHitTime < 1500) combo = Math.min(combo + 1, 5);
-                            else combo = 1;
-                            lastHitTime = now;
-                            score += 10 * combo;
-                            document.getElementById('score').textContent = `SCORE: ${score}`;
-                            gsap.to(camera.position, {
-                                x: `+=${(Math.random() - 0.5) * 0.2}`,
-                                y: `+=${(Math.random() - 0.5) * 0.2}`,
-                                z: `+=${(Math.random() - 0.5) * 0.2}`,
-                                duration: 0.1,
-                                yoyo: true,
-                                repeat: 1
-                            });
-                            spawnShards(target);
-                            scene.remove(target.mesh);
-                            world.removeRigidBody(target.body);
-                            objects = objects.filter(o => o !== target);
-                        }
-                    }
-                }
-
-                function spawnShards(target) {
-                    for (let i = 0; i < 3; i++) {
-                        const geo = new THREE.IcosahedronGeometry(0.3, 0);
-                        const mat = new THREE.MeshStandardMaterial({ color: 0xff00ff });
-                        const mesh = new THREE.Mesh(geo, mat);
-                        mesh.position.copy(target.mesh.position);
-                        scene.add(mesh);
-                        const shape = new Ammo.btSphereShape(0.3);
-                        const transform = new Ammo.btTransform();
-                        transform.setIdentity();
-                        transform.setOrigin(new Ammo.btVector3(mesh.position.x, mesh.position.y, mesh.position.z));
-                        const body = new Ammo.btRigidBody(
-                            new Ammo.btRigidBodyConstructionInfo(0.5, new Ammo.btDefaultMotionState(transform), shape)
-                        );
-                        body.setLinearVelocity(new Ammo.btVector3(
-                            (Math.random() - 0.5) * 10,
-                            (Math.random() - 0.5) * 10,
-                            (Math.random() - 0.5) * 10
-                        ));
-                        world.addRigidBody(body);
-                        objects.push({ mesh, body, type: 'shard' });
-                    }
-                }
-
-                function animate() {
-                    try {
-                        requestAnimationFrame(animate);
-                        world.stepSimulation(1 / 60, 10);
-                        updatePlayer();
-                        handleCollisions();
-                        objects.forEach(obj => {
-                            const transform = obj.body.getWorldTransform();
-                            const pos = transform.getOrigin();
-                            const quat = transform.getRotation();
-                            obj.mesh.position.set(pos.x(), pos.y(), pos.z());
-                            obj.mesh.quaternion.set(quat.x(), quat.y(), quat.z(), quat.w());
-                            if (pos.y() < -10 || Math.hypot(pos.x(), pos.z()) > 100) {
-                                scene.remove(obj.mesh);
-                                world.removeRigidBody(obj.body);
-                                objects = objects.filter(o => o !== obj);
-                            }
-                        });
-                        renderer.render(scene, camera);
-                    } catch (e) {
-                        showError('Render loop failed. Falling back to basic render.');
-                        console.error('Render loop failed:', e);
-                        initFallback();
-                    }
-                }
-            }).catch(err => {
-                showError('Physics engine failed. Showing basic render.');
-                console.error('Ammo.js initialization failed:', err);
-                initFallback();
+            // Event listeners
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
             });
-        } else {
-            showError('Physics unavailable. Showing basic scene.');
-            console.warn('Ammo.js not loaded. Starting fallback render.');
-            initFallback();
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', (e) => {
+                if (e.button === 0 && controls.isLocked && !paused) shootProjectile();
+            });
+
+            // Pointer lock
+            document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock || document.body.webkitRequestPointerLock;
+            instructions.addEventListener('click', () => document.body.requestPointerLock());
+            document.addEventListener('pointerlockchange', () => {
+                if (document.pointerLockElement === document.body) {
+                    controls.enabled = true;
+                    instructions.style.display = 'none';
+                    crosshair.style.display = 'block';
+                } else {
+                    controls.enabled = false;
+                    instructions.style.display = 'flex';
+                    crosshair.style.display = 'none';
+                }
+            });
+
+            updateHUD();
         }
+
+        // Create trees
+        function createTrees(count) {
+            const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+            const foliageMat = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 50 + Math.random() * 500;
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+                const trunkHeight = 5 + Math.random() * 5;
+                const trunkRadius = 0.5 + Math.random() * 0.5;
+                const foliageRadius = trunkRadius * 3 + Math.random() * 2;
+
+                // Trunk
+                const trunkMesh = new THREE.Mesh(
+                    new THREE.CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8),
+                    trunkMat
+                );
+                trunkMesh.position.set(x, trunkHeight / 2 + 0.1, z);
+                trunkMesh.castShadow = true;
+                scene.add(trunkMesh);
+
+                const trunkBody = new CANNON.Body({
+                    mass: trunkHeight * 15,
+                    material: objectMaterial,
+                    shape: new CANNON.Cylinder(trunkRadius, trunkRadius, trunkHeight, 8),
+                    position: new CANNON.Vec3(x, trunkHeight / 2 + 0.1, z)
+                });
+                world.addBody(trunkBody);
+                addDestructionListener(trunkBody, trunkMesh, 10, 20, 5);
+                objects.push({ mesh: trunkMesh, body: trunkBody });
+
+                // Foliage
+                const foliageMesh = new THREE.Mesh(
+                    new THREE.SphereGeometry(foliageRadius, 12, 12),
+                    foliageMat
+                );
+                foliageMesh.position.set(x, trunkHeight / 2 + foliageRadius * 0.7 + 0.1, z);
+                foliageMesh.castShadow = true;
+                scene.add(foliageMesh);
+
+                const foliageBody = new CANNON.Body({
+                    mass: foliageRadius * 5,
+                    material: objectMaterial,
+                    shape: new CANNON.Sphere(foliageRadius),
+                    position: new CANNON.Vec3(x, trunkHeight / 2 + foliageRadius * 0.7 + 0.1, z)
+                });
+                world.addBody(foliageBody);
+                addDestructionListener(foliageBody, foliageMesh, 8, 15, 5);
+                objects.push({ mesh: foliageMesh, body: foliageBody });
+            }
+        }
+
+        // Handle object destruction
+        function addDestructionListener(body, mesh, scoreThreshold, destroyThreshold, scoreValue) {
+            body.addEventListener('collide', (e) => {
+                if (paused) return;
+                const impactVelocity = Math.abs(e.contact.getImpactVelocityAlongNormal());
+                if (impactVelocity > scoreThreshold) {
+                    const now = performance.now();
+                    if (now - lastHitTime < 2000) combo = Math.min(combo + 1, 5);
+                    else combo = 1;
+                    lastHitTime = now;
+                    score += scoreValue * combo;
+                    scoreElement.textContent = `SCORE: ${score}`;
+                }
+                if (impactVelocity > destroyThreshold) {
+                    const objIndex = objects.findIndex(obj => obj.body === body);
+                    if (objIndex > -1) {
+                        const hitObject = objects[objIndex];
+                        if (hitObject.mesh.geometry.type === 'BoxGeometry' && hitObject.body.mass > 10) {
+                            spawnDebris(hitObject.body, hitObject.mesh);
+                        }
+                        safelyRemoveObject(hitObject);
+                        objects.splice(objIndex, 1);
+                    }
+                }
+            });
+        }
+
+        // Safely remove objects
+        function safelyRemoveObject({ mesh, body }) {
+            if (mesh && mesh.parent) {
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+                scene.remove(mesh);
+            }
+            if (body && world.bodies.includes(body)) {
+                world.removeBody(body);
+            }
+        }
+
+        // Key input
+        function onKeyDown(event) {
+            if (event.code === 'KeyP') {
+                paused = !paused;
+                pauseOverlay.style.display = paused ? 'flex' : 'none';
+                crosshair.style.display = paused ? 'none' : controls.enabled ? 'block' : 'none';
+                return;
+            }
+            if (!controls.enabled || paused) return;
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'Space':
+                    if (Math.abs(playerBody.velocity.y) < 0.01) {
+                        playerBody.velocity.y = jumpStrength;
+                    }
+                    break;
+                case 'Digit1': weapon = 'pistol'; updateHUD(); break;
+                case 'Digit2': weapon = 'cannon'; updateHUD(); break;
+                case 'Digit3': weapon = 'scattershot'; updateHUD(); break;
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        // Player movement
+        function updatePlayerMovement(deltaTime) {
+            if (!controls.enabled || paused) return;
+            const velocity = new THREE.Vector3();
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0));
+
+            if (moveForward) velocity.add(direction);
+            if (moveBackward) velocity.sub(direction);
+            if (moveLeft) velocity.sub(right);
+            if (moveRight) velocity.add(right);
+
+            if (velocity.length() > 0) {
+                velocity.normalize().multiplyScalar(moveSpeed);
+                playerBody.velocity.x = velocity.x;
+                playerBody.velocity.z = velocity.z;
+            } else {
+                playerBody.velocity.x *= 0.8; // Smooth stop
+                playerBody.velocity.z *= 0.8;
+            }
+
+            controls.getObject().position.copy(playerBody.position).add(new THREE.Vector3(0, playerHeight, 0));
+        }
+
+        // Shoot projectiles
+        function shootProjectile() {
+            const params = {
+                pistol: { radius: 0.1, mass: 0.5, speed: 80, count: 1, color: 0xff4444, lifeTime: 3 },
+                cannon: { radius: 0.5, mass: 10, speed: 40, count: 1, color: 0x4444ff, lifeTime: 5 },
+                scattershot: { radius: 0.08, mass: 0.2, speed: 70, count: 8, color: 0xffaa00, lifeTime: 2 }
+            }[weapon];
+
+            const startPos = new THREE.Vector3();
+            camera.getWorldPosition(startPos);
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            startPos.add(direction.clone().multiplyScalar(playerRadius + params.radius + 0.1));
+
+            // Muzzle flash
+            muzzleFlashLight.position.copy(startPos);
+            muzzleFlashLight.intensity = 1.5;
+            gsap.to(muzzleFlashLight, { intensity: 0, duration: 0.1 });
+
+            for (let i = 0; i < params.count; i++) {
+                const mesh = new THREE.Mesh(
+                    new THREE.SphereGeometry(params.radius, 8, 8),
+                    new THREE.MeshStandardMaterial({ color: params.color, emissive: params.color, emissiveIntensity: 0.5 })
+                );
+                mesh.castShadow = true;
+                mesh.position.copy(startPos);
+                scene.add(mesh);
+
+                const body = new CANNON.Body({
+                    mass: params.mass,
+                    material: projectileMaterial,
+                    shape: new CANNON.Sphere(params.radius),
+                    position: new CANNON.Vec3().copy(startPos)
+                });
+
+                const shootDir = direction.clone();
+                if (weapon === 'scattershot') {
+                    shootDir.add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3
+                    )).normalize();
+                }
+
+                body.velocity.copy(shootDir.multiplyScalar(params.speed)).vadd(playerBody.velocity);
+                world.addBody(body);
+                const obj = { mesh, body };
+                objects.push(obj);
+
+                setTimeout(() => {
+                    const index = objects.indexOf(obj);
+                    if (index > -1) {
+                        safelyRemoveObject(obj);
+                        objects.splice(index, 1);
+                    }
+                }, params.lifeTime * 1000);
+            }
+
+            // Recoil animation
+            gsap.to(camera.rotation, {
+                x: camera.rotation.x - (weapon === 'cannon' ? 0.05 : 0.02),
+                duration: 0.05,
+                yoyo: true,
+                repeat: 1
+            });
+        }
+
+        // Spawn debris
+        function spawnDebris(sourceBody, sourceMesh) {
+            const numDebris = 6;
+            const sourceSize = sourceBody.shapes[0].halfExtents || new CANNON.Vec3(1, 1, 1);
+            const debrisSize = Math.max(0.3, Math.min(sourceSize.x, sourceSize.y, sourceSize.z) / 4);
+            const debrisMass = Math.max(0.1, sourceBody.mass / (numDebris * 3));
+
+            for (let i = 0; i < numDebris; i++) {
+                const mesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(debrisSize, debrisSize, debrisSize),
+                    sourceMesh.material
+                );
+                mesh.castShadow = true;
+                mesh.position.copy(sourceBody.position);
+                scene.add(mesh);
+
+                const body = new CANNON.Body({
+                    mass: debrisMass,
+                    material: objectMaterial,
+                    shape: new CANNON.Box(new CANNON.Vec3(debrisSize / 2, debrisSize / 2, debrisSize / 2)),
+                    position: new CANNON.Vec3().copy(sourceBody.position)
+                });
+
+                body.velocity.set(
+                    sourceBody.velocity.x + (Math.random() - 0.5) * 10,
+                    sourceBody.velocity.y + Math.random() * 5,
+                    sourceBody.velocity.z + (Math.random() - 0.5) * 10
+                );
+                body.angularVelocity.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15);
+                world.addBody(body);
+                const obj = { mesh, body };
+                objects.push(obj);
+
+                setTimeout(() => {
+                    const index = objects.indexOf(obj);
+                    if (index > -1) {
+                        safelyRemoveObject(obj);
+                        objects.splice(index, 1);
+                    }
+                }, (4 + Math.random() * 4) * 1000);
+            }
+        }
+
+        // Update HUD
+        function updateHUD() {
+            hudElement.textContent = `Weapon: ${weapon.charAt(0).toUpperCase() + weapon.slice(1)}`;
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = Math.min(clock.getDelta(), 0.1);
+
+            if (!paused) {
+                updatePlayerMovement(deltaTime);
+                world.step(1 / 60, deltaTime, 3);
+
+                for (let i = objects.length - 1; i >= 0; i--) {
+                    const obj = objects[i];
+                    if (obj.body && world.bodies.includes(obj.body)) {
+                        obj.mesh.position.copy(obj.body.position);
+                        obj.mesh.quaternion.copy(obj.body.quaternion);
+                        if (obj.body.position.y < -50) {
+                            safelyRemoveObject(obj);
+                            objects.splice(i, 1);
+                        }
+                    } else {
+                        safelyRemoveObject(obj);
+                        objects.splice(i, 1);
+                    }
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Start game
+        init();
+        animate();
     </script>
 </body>
 </html>
