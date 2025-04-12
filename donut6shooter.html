@@ -10,7 +10,7 @@
         #score { position: absolute; top: 20px; right: 20px; color: #0ff; font-family: monospace; font-size: 24px; }
         #weapon { position: absolute; bottom: 20px; left: 20px; color: #0ff; font-family: monospace; font-size: 18px; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="2" fill="cyan" /><line x1="10" y1="2" x2="10" y2="6" stroke="cyan" /><line x1="10" y1="14" x2="10" y2="18" stroke="cyan" /><line x1="2" y1="10" x2="6" y2="10" stroke="cyan" /><line x1="14" y1="10" x2="18" y2="10" stroke="cyan" /></svg>') no-repeat center; transform: translate(-50%, -50%); pointer-events: none; }
-        #error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-family: monospace; display: none; }
+        #error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-family: monospace; font-size: 20px; text-align: center; display: none; }
     </style>
 </head>
 <body>
@@ -18,15 +18,28 @@
     <div id="weapon">WEAPON: Pulse</div>
     <div id="crosshair"></div>
     <div id="error"></div>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ammo.js@0.0.10/builds/ammo.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.min.js" integrity="sha256-4fEOLnJgadO1r3Z/L66sUOdO9V+OKm5ePMp5jdJ3zqQ=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/libs/ammo.wasm.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" integrity="sha256-7lgwe1vPSVaFjChreQd7cEPa+NXUL4vG2q3xA1vJ2j4=" crossorigin="anonymous"></script>
     <script>
-        // Wait for Ammo.js to initialize
+        // Check if libraries loaded
+        if (typeof THREE === 'undefined') {
+            showError('Three.js failed to load. Check network or CDN.');
+            throw new Error('Three.js not loaded');
+        }
         if (typeof Ammo === 'undefined') {
-            document.getElementById('error').style.display = 'block';
-            document.getElementById('error').textContent = 'Error: Ammo.js failed to load. Please serve via HTTP/HTTPS.';
+            showError('Ammo.js failed to load. Check network or CDN.');
             throw new Error('Ammo.js not loaded');
+        }
+        if (typeof gsap === 'undefined') {
+            showError('GSAP failed to load. Check network or CDN.');
+            throw new Error('GSAP not loaded');
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.style.display = 'block';
+            errorDiv.textContent = message;
         }
 
         Ammo().then(function(AmmoLib) {
@@ -52,16 +65,16 @@
                     renderer = new THREE.WebGLRenderer({ antialias: true });
                     renderer.setSize(window.innerWidth, window.innerHeight);
                     renderer.shadowMap.enabled = true;
+                    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
                     document.body.appendChild(renderer.domElement);
 
                     // Physics setup
-                    const gravity = new Ammo.btVector3(0, -9.82, 0);
                     const collisionConfig = new Ammo.btDefaultCollisionConfiguration();
                     const dispatcher = new Ammo.btCollisionDispatcher(collisionConfig);
                     const broadphase = new Ammo.btDbvtBroadphase();
                     const solver = new Ammo.btSequentialImpulseConstraintSolver();
                     world = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
-                    world.setGravity(gravity);
+                    world.setGravity(new Ammo.btVector3(0, -9.82, 0));
 
                     // Player
                     const playerShape = new Ammo.btSphereShape(0.5);
@@ -117,12 +130,12 @@
                     window.addEventListener('touchstart', handleTouchStart);
                     window.addEventListener('keydown', handleKeyDown);
                     window.addEventListener('mousemove', handleMouseMove);
+                    window.addEventListener('contextmenu', (e) => e.preventDefault());
 
                     animate();
                 } catch (e) {
+                    showError('Game initialization failed. Check console for details.');
                     console.error('Init failed:', e);
-                    document.getElementById('error').style.display = 'block';
-                    document.getElementById('error').textContent = 'Error: Game failed to initialize. Check console.';
                 }
             }
 
@@ -249,8 +262,9 @@
             }
 
             function getGroundPoint(event) {
-                const clientX = event.clientX || event.x;
-                const clientY = event.clientY || event.y;
+                const clientX = event.clientX || (event.touches && event.touches[0].clientX);
+                const clientY = event.clientY || (event.touches && event.touches[0].clientY);
+                if (!clientX || !clientY) return null;
                 const mouse = new THREE.Vector2(
                     (clientX / window.innerWidth) * 2 - 1,
                     -(clientY / window.innerHeight) * 2 + 1
@@ -355,12 +369,12 @@
                     renderer.render(scene, camera);
                 } catch (e) {
                     console.error('Render loop failed:', e);
+                    showError('Render loop failed. Check console.');
                 }
             }
         }).catch(err => {
+            showError('Physics engine failed to initialize. Check network or console.');
             console.error('Ammo.js initialization failed:', err);
-            document.getElementById('error').style.display = 'block';
-            document.getElementById('error').textContent = 'Error: Physics engine failed. Check network or console.';
         });
     </script>
 </body>
