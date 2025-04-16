@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Particle Physics</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@4.0.1';
+
+    // --- Configuration ---
+    const PARTICLE_COUNT = 50000; // Adjust for performance (lower if needed)
+    const PARTICLE_SIZE = 0.05;   // Base size of particles
+    const PARTICLE_COLOR = 0xaaaaff; // Base color (used if vertexColors is false)
+    const NOISE_SPEED = 0.0002;   // How fast the noise field evolves
+    const NOISE_SCALE = 2.5;      // Spatial scale of the noise field
+    const PARTICLE_SPEED = 0.05;  // How much the noise affects velocity
+    const FRICTION = 0.96;        // Slows down particles over time
+    const MOUSE_RADIUS = 0.5;     // Area of mouse influence
+    const MOUSE_STRENGTH = -0.01; // Negative for repulsion, positive for attraction
+    const ENABLE_VERTEX_COLORS = true; // Set to false to use single PARTICLE_COLOR
+
+    // --- Scene Setup ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 5;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    // --- Controls ---
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // Smooths camera movement
+
+    // --- Noise ---
+    const simplex = new SimplexNoise();
+
+    // --- Particles ---
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const velocities = new Float32Array(PARTICLE_COUNT * 3);
+    const colors = ENABLE_VERTEX_COLORS ? new Float32Array(PARTICLE_COUNT * 3) : null;
+
+    const baseColor = new THREE.Color(PARTICLE_COLOR);
+
+    // Initialize Particles
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+
+        // Initial position (random sphere)
+        const radius = Math.random() * 2 + 1; // Start slightly away from center
+        const phi = Math.acos((2 * Math.random()) - 1); // Uniform sphere distribution
+        const theta = Math.random() * Math.PI * 2;
+
+        positions[i3 + 0] = radius * Math.sin(phi) * Math.cos(theta); // x
+        positions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta); // y
+        positions[i3 + 2] = radius * Math.cos(phi);                   // z
+
+        // Initial velocity (start mostly at rest)
+        velocities[i3 + 0] = (Math.random() - 0.5) * 0.01;
+        velocities[i3 + 1] = (Math.random() - 0.5) * 0.01;
+        velocities[i3 + 2] = (Math.random() - 0.5) * 0.01;
+
+        // Initial color (if enabled)
+        if (ENABLE_VERTEX_COLORS && colors) {
+            // Start with base color, or add slight variations
+            const colorVariation = Math.random() * 0.3;
+            colors[i3 + 0] = baseColor.r + (Math.random() - 0.5) * colorVariation;
+            colors[i3 + 1] = baseColor.g + (Math.random() - 0.5) * colorVariation;
+            colors[i3 + 2] = baseColor.b + (Math.random() - 0.5) * colorVariation;
+        }
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3)); // Store velocity per particle
+    if (ENABLE_VERTEX_COLORS && colors) {
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3)); // Add color attribute
+    }
+
+    const material = new THREE.PointsMaterial({
+        size: PARTICLE_SIZE,
+        color: ENABLE_VERTEX_COLORS ? undefined : PARTICLE_COLOR, // Set color only if not using vertex colors
+        vertexColors: ENABLE_VERTEX_COLORS, // Enable vertex colors
+        blending: THREE.AdditiveBlending, // Bright, glowing effect for overlaps
+        transparent: true,
+        depthWrite: false,        // Important for additive blending rendering order
+        sizeAttenuation: true     // Particles appear smaller further away
+    });
+
+    const particles = new THREE.Points(geometry, material);
+    scene.add(particles);
+
+    // --- Mouse Interaction ---
+    const mouse = new THREE.Vector2(-100, -100); // Initialize off-screen
+    const mouse3D = new THREE.Vector3(); // For interaction in 3D space
+    const raycaster = new THREE.Raycaster();
+    // Use a plane parallel to the camera view for more intuitive interaction
+    const interactionPlane = new THREE.Plane();
+
+    function updateInteractionPlane() {
+         // Place plane a certain distance in front of the camera
+        const planeDistance = camera.position.length() * 0.8; // Adjust as needed
+        interactionPlane.setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(interactionPlane.normal),
+            camera.position.clone().add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(planeDistance))
+        );
+    }
+
+    window.addEventListener('mousemove', (event) => {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }, false);
+
+    window.addEventListener('mouseout', () => {
+        // Move mouse coords far away when it leaves the window
+        mouse.x = -100;
+        mouse.y = -100;
+    }, false);
+     window.addEventListener('touchmove', (event) => {
+        if (event.touches.length > 0) {
+            mouse.x = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
+        }
+    }, false);
+
+    window.addEventListener('touchend', () => {
+         mouse.x = -100;
+         mouse.y = -100;
+    }, false);
+
+    // --- Animation Loop ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = clock.getDelta(); // Time since last frame
+        const elapsedTime = clock.getElapsedTime(); // Total time elapsed
+
+        // Update interaction plane based on camera
+        updateInteractionPlane();
+
+        // Update Raycaster and find intersection with the interaction plane
+        // Only compute if mouse is potentially interacting
+        if (mouse.x > -10) {
+             raycaster.setFromCamera(mouse, camera);
+             raycaster.ray.intersectPlane(interactionPlane, mouse3D);
+        }
+
+
+        // Get attribute buffers
+        const posAttr = geometry.attributes.position;
+        const velAttr = geometry.attributes.velocity;
+        const colAttr = ENABLE_VERTEX_COLORS ? geometry.attributes.color : null;
+
+        const noiseTime = elapsedTime * NOISE_SPEED * 100; // Scale time for noise evolution
+
+        // Update each particle
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+
+            // Get current position and velocity
+            const x = posAttr.getX(i);
+            const y = posAttr.getY(i);
+            const z = posAttr.getZ(i);
+
+            let vx = velAttr.getX(i);
+            let vy = velAttr.getY(i);
+            let vz = velAttr.getZ(i);
+
+            // --- Physics Update ---
+
+            // 1. Apply Noise Field (approximating curl noise influence)
+            // Using 4D noise allows the field to change over time
+            const noiseX = x * NOISE_SCALE;
+            const noiseY = y * NOISE_SCALE;
+            const noiseZ = z * NOISE_SCALE;
+
+            // Sample noise at slightly offset points to get directional vectors (simplified curl)
+            const noiseFactor = PARTICLE_SPEED * delta;
+            vx += (simplex.noise4D(noiseX, noiseY, noiseZ, noiseTime + 100)) * noiseFactor;
+            vy += (simplex.noise4D(noiseX, noiseY, noiseZ, noiseTime + 200)) * noiseFactor;
+            vz += (simplex.noise4D(noiseX, noiseY, noiseZ, noiseTime + 300)) * noiseFactor;
+
+            // 2. Apply Mouse Interaction
+            if (mouse.x > -10) { // Check if mouse is roughly inside window
+                const dx = x - mouse3D.x;
+                const dy = y - mouse3D.y;
+                const dz = z - mouse3D.z;
+                const distSq = dx * dx + dy * dy + dz * dz; // Use squared distance
+
+                if (distSq < MOUSE_RADIUS * MOUSE_RADIUS && distSq > 0.0001) { // Avoid division by zero
+                    const distance = Math.sqrt(distSq);
+                    // Force decreases linearly with distance from center of influence
+                    const forceFactor = MOUSE_STRENGTH * (1 - distance / MOUSE_RADIUS);
+                    const forceScale = forceFactor * delta / distance; // Normalize direction vector
+
+                    vx += dx * forceScale;
+                    vy += dy * forceScale;
+                    vz += dz * forceScale;
+                }
+            }
+
+            // 3. Apply Friction/Damping
+            vx *= FRICTION;
+            vy *= FRICTION;
+            vz *= FRICTION;
+
+            // 4. Update Position based on Velocity
+            // Scale velocity by delta to make movement frame-rate independent
+            let newX = x + vx * delta * 60; // Multiply by ~60fps target for sensible speed scaling
+            let newY = y + vy * delta * 60;
+            let newZ = z + vz * delta * 60;
+
+            // 5. Boundary Check (Simple respawn in center-ish)
+            const boundary = 10; // Keep particles within this radius
+            if (newX * newX + newY * newY + newZ * newZ > boundary * boundary) {
+                 const radius = Math.random() * 0.5; // Respawn near center
+                 const phi = Math.acos((2 * Math.random()) - 1);
+                 const theta = Math.random() * Math.PI * 2;
+
+                 newX = radius * Math.sin(phi) * Math.cos(theta);
+                 newY = radius * Math.sin(phi) * Math.sin(theta);
+                 newZ = radius * Math.cos(phi);
+                 vx = 0; vy = 0; vz = 0; // Reset velocity
+            }
+
+            // Write back updated values to the buffers
+            posAttr.setXYZ(i, newX, newY, newZ);
+            velAttr.setXYZ(i, vx, vy, vz);
+
+            // Optional: Update color based on velocity magnitude (speed)
+            if (ENABLE_VERTEX_COLORS && colAttr) {
+                const speed = Math.sqrt(vx*vx + vy*vy + vz*vz);
+                const intensity = Math.min(speed * 20 + 0.3, 1.0); // Clamp intensity (adjust multiplier as needed)
+                // Blend towards white based on speed for a brighter look
+                colAttr.setXYZ(i,
+                    THREE.MathUtils.lerp(baseColor.r, 1, intensity),
+                    THREE.MathUtils.lerp(baseColor.g, 1, intensity),
+                    THREE.MathUtils.lerp(baseColor.b, 1, intensity)
+                );
+            }
+        }
+
+        // Mark attributes as needing GPU update
+        posAttr.needsUpdate = true;
+        velAttr.needsUpdate = true;
+        if (ENABLE_VERTEX_COLORS && colAttr) {
+            colAttr.needsUpdate = true;
+        }
+
+        // Update camera controls
+        controls.update();
+
+        // Render the scene
+        renderer.render(scene, camera);
+    }
+
+    // --- Resize Handler ---
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    window.addEventListener('resize', onWindowResize, false);
+
+    // --- Start Animation ---
+    animate();
+
+</script>
+
+</body>
+</html>
