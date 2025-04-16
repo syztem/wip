@@ -23,10 +23,7 @@
 <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import SimplexNoise from 'https://esm.sh/simplex-noise@4.0.1?bundle';
-
-    // Debug: Check what is imported
-    console.log('SimplexNoise import:', SimplexNoise);
+    import { SimplexNoise } from 'https://esm.sh/simplex-noise@4.0.1?bundle';
 
     // --- Configuration ---
     const PARTICLE_COUNT = 50000; // Adjust for performance (lower if needed)
