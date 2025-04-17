@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interactive Particle Toy</title>
+    <!-- Tailwind CSS (cdn.tailwindcss.com for prototyping) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html, body, #root { height: 100%; margin: 0; padding: 0; }
+    </style>
+    <!-- React and ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  </head>
+  <body class="bg-black">
+    <div id="root"></div>
+    <script type="module">
+      import * as THREE from 'https://unpkg.com/three@0.155.0/build/three.module.js';
+      const { useState, useEffect, useRef, useCallback } = React;
+      // Constants
+      const PARTICLE_COUNT = 5000;
+      const PARTICLE_SIZE = 0.06;
+      const MOUSE_INFLUENCE_RADIUS = 1.5;
+      const MOUSE_REPEL_FORCE = 0.9;
+      const SHAPE_ATTRACTION_FORCE = 0.015;
+      const IDLE_CENTER_PULL = 0.001;
+      const DAMPING = 0.94;
+      const MAX_SPEED = 0.6;
+      const STRETCH_FACTOR = 6;
+
+      // Helper function to create a hexagon shape
+      function createHexagonGeometry(size) {
+        const shape = new THREE.Shape();
+        const angleStep = Math.PI / 3; // 60 degrees
+        shape.moveTo(size, 0);
+        for (let i = 1; i < 6; i++) {
+          shape.lineTo(size * Math.cos(i * angleStep), size * Math.sin(i * angleStep));
+        }
+        shape.closePath();
+        const geometry = new THREE.ShapeGeometry(shape);
+        return geometry;
+      }
+
+      // Shape generation functions
+      function getRandomPointOnSphere(radius) {
+        const u = Math.random();
+        const v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        const x = radius * Math.sin(phi) * Math.cos(theta);
+        const y = radius * Math.sin(phi) * Math.sin(theta);
+        const z = radius * Math.cos(phi);
+        return new THREE.Vector3(x, y, z);
+      }
+
+      function getRandomPointOnTorus(mainRadius, tubeRadius) {
+        const u = Math.random() * Math.PI * 2;
+        const v = Math.random() * Math.PI * 2;
+        const x = (mainRadius + tubeRadius * Math.cos(v)) * Math.cos(u);
+        const y = (mainRadius + tubeRadius * Math.cos(v)) * Math.sin(u);
+        const z = tubeRadius * Math.sin(v);
+        return new THREE.Vector3(x, y, z);
+      }
+
+      function ParticleToy() {
+        const mountRef = useRef(null);
+        const [currentShape, setCurrentShape] = useState('idle');
+        const [isInitialized, setIsInitialized] = useState(false);
+
+        // Refs for three.js objects and data to persist across renders
+        const rendererRef = useRef(null);
+        const cameraRef = useRef(null);
+        const sceneRef = useRef(null);
+        const meshRef = useRef(null);
+        const particlesDataRef = useRef(null);
+        const mouseRef = useRef(new THREE.Vector3(10000, 10000, 0)); // Start mouse far away
+        const animationFrameIdRef = useRef(null);
+        const clockRef = useRef(new THREE.Clock());
+        const cursorRef = useRef(null);
+
+        // Function to update target positions based on shape
+        const updateTargets = useCallback((shape) => {
+          if (!particlesDataRef.current) return;
+          for (let i = 0; i < PARTICLE_COUNT; i++) {
+            if (shape === 'sphere') {
+              particlesDataRef.current.targetPositions[i] = getRandomPointOnSphere(3.0);
+            } else if (shape === 'torus') {
+              particlesDataRef.current.targetPositions[i] = getRandomPointOnTorus(3.0, 1.0);
+            } else {
+              // idle: target far away, let mouse and center pull dominate
+              // Give a slight random target to prevent perfect collapse
+              particlesDataRef.current.targetPositions[i] = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.1,
+                (Math.random() - 0.5) * 0.1,
+                (Math.random() - 0.5) * 0.1
+              );
+            }
+          }
+        }, []);
+
+        // Effect to update targets when shape changes
+        useEffect(() => {
+          if (isInitialized) {
+            updateTargets(currentShape);
+          }
+        }, [currentShape, isInitialized, updateTargets]);
+
+        // Setup Three.js scene
+        useEffect(() => {
+          if (!mountRef.current || typeof window === 'undefined') {
+            return;
+          }
+          if (rendererRef.current) return;
+          const currentMount = mountRef.current;
+          const scene = new THREE.Scene();
+          sceneRef.current = scene;
+          const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 100);
+          camera.position.z = 8;
+          cameraRef.current = camera;
+          const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+          renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
+          renderer.setPixelRatio(window.devicePixelRatio);
+          renderer.setClearColor(0x000000, 0);
+          currentMount.appendChild(renderer.domElement);
+          rendererRef.current = renderer;
+          const particleGeometry = createHexagonGeometry(PARTICLE_SIZE);
+          const vertexShader = `
+            attribute vec3 instanceColor;
+            varying vec3 vInstanceColor;
+            varying float vAlpha;
+            void main() {
+              vInstanceColor = instanceColor;
+              vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+              float distance = length(mvPosition.xyz);
+              vAlpha = smoothstep(15.0, 8.0, distance);
+              gl_Position = projectionMatrix * mvPosition;
+            }
+          `;
+          const fragmentShader = `
+            varying vec3 vInstanceColor;
+            varying float vAlpha;
+            void main() {
+              float dotNL = 1.0;
+              vec3 color = vInstanceColor * dotNL;
+              color += vec3(0.1, 0.15, 0.2);
+              float centerGlow = 1.0 - length(gl_PointCoord - vec2(0.5)) * 2.0;
+              gl_FragColor = vec4(color, vAlpha * 0.85 * centerGlow);
+              if (gl_FragColor.a < 0.01) discard;
+            }
+          `;
+          const material = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            uniforms: {},
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const positions = [];
+          const velocities = [];
+          const targetPositions = [];
+          const baseColors = [];
+          const instanceColors = new Float32Array(PARTICLE_COUNT * 3);
+          for (let i = 0; i < PARTICLE_COUNT; i++) {
+            positions.push(
+              new THREE.Vector3(
+                (Math.random() - 0.5) * 10,
+                (Math.random() - 0.5) * 10,
+                (Math.random() - 0.5) * 10
+              )
+            );
+            velocities.push(new THREE.Vector3());
+            targetPositions.push(new THREE.Vector3());
+            const h = 0.55 + Math.random() * 0.15;
+            const s = 0.7 + Math.random() * 0.2;
+            const l = 0.5 + Math.random() * 0.3;
+            const color = new THREE.Color().setHSL(h, s, l);
+            baseColors.push(color);
+            color.toArray(instanceColors, i * 3);
+          }
+          particlesDataRef.current = { positions, velocities, targetPositions, baseColors };
+          const mesh = new THREE.InstancedMesh(particleGeometry, material, PARTICLE_COUNT);
+          mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+          mesh.geometry.setAttribute('instanceColor', new THREE.InstancedBufferAttribute(instanceColors, 3));
+          scene.add(mesh);
+          meshRef.current = mesh;
+          updateTargets(currentShape);
+          setIsInitialized(true);
+          const handleMouseMove = (event) => {
+            const rect = currentMount.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / currentMount.clientWidth) * 2 - 1;
+            const y = -((event.clientY - rect.top) / currentMount.clientHeight) * 2 + 1;
+            const vector = new THREE.Vector3(x, y, 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const distance = -camera.position.z / dir.z;
+            mouseRef.current.copy(camera.position).add(dir.multiplyScalar(distance));
+            if (cursorRef.current) {
+              cursorRef.current.style.left = `${event.clientX}px`;
+              cursorRef.current.style.top = `${event.clientY}px`;
+            }
+          };
+          window.addEventListener('mousemove', handleMouseMove);
+          const handleResize = () => {
+            if (!rendererRef.current || !cameraRef.current || !mountRef.current) return;
+            const width = mountRef.current.clientWidth;
+            const height = mountRef.current.clientHeight;
+            cameraRef.current.aspect = width / height;
+            cameraRef.current.updateProjectionMatrix();
+            rendererRef.current.setSize(width, height);
+          };
+          window.addEventListener('resize', handleResize);
+          const dummy = new THREE.Object3D();
+          const animate = () => {
+            animationFrameIdRef.current = requestAnimationFrame(animate);
+            const delta = clockRef.current.getDelta();
+            if (!particlesDataRef.current || !meshRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+            const { positions, velocities, targetPositions } = particlesDataRef.current;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+              const pos = positions[i];
+              const vel = velocities[i];
+              const target = targetPositions[i];
+              const force = new THREE.Vector3();
+              const distToMouseSq = pos.distanceToSquared(mouseRef.current);
+              if (distToMouseSq < MOUSE_INFLUENCE_RADIUS * MOUSE_INFLUENCE_RADIUS) {
+                const distToMouse = Math.sqrt(distToMouseSq);
+                const repelDir = pos.clone().sub(mouseRef.current).normalize();
+                const repelStrength = (1 - distToMouse / MOUSE_INFLUENCE_RADIUS) * MOUSE_REPEL_FORCE;
+                force.add(repelDir.multiplyScalar(repelStrength));
+              }
+              const attractDir = target.clone().sub(pos);
+              const distToTarget = attractDir.length();
+              if (currentShape !== 'idle' || distToTarget > 0.1) {
+                force.add(attractDir.normalize().multiplyScalar(SHAPE_ATTRACTION_FORCE * (currentShape === 'idle' ? 0.1 : 1.0)));
+              }
+              const centerPullDir = pos.clone().negate();
+              const centerPullStrength = (currentShape === 'idle' ? IDLE_CENTER_PULL * 5 : IDLE_CENTER_PULL);
+              force.add(centerPullDir.normalize().multiplyScalar(centerPullStrength));
+              vel.add(force.multiplyScalar(delta * 60));
+              vel.multiplyScalar(DAMPING);
+              if (vel.lengthSq() > MAX_SPEED * MAX_SPEED) {
+                vel.normalize().multiplyScalar(MAX_SPEED);
+              }
+              pos.add(vel.clone().multiplyScalar(delta * 60));
+              dummy.position.copy(pos);
+              if (vel.lengthSq() > 0.00001) {
+                dummy.lookAt(pos.clone().add(vel));
+              }
+              const speed = vel.length();
+              const stretch = 1 + Math.min(speed * STRETCH_FACTOR, 5);
+              dummy.scale.set(1, 1, stretch);
+              dummy.updateMatrix();
+              meshRef.current.setMatrixAt(i, dummy.matrix);
+            }
+            meshRef.current.instanceMatrix.needsUpdate = true;
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+          };
+          animate();
+          return () => {
+            if (animationFrameIdRef.current) {
+              cancelAnimationFrame(animationFrameIdRef.current);
+            }
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('resize', handleResize);
+            if (rendererRef.current) {
+              rendererRef.current.dispose();
+              if (rendererRef.current.domElement.parentNode === currentMount) {
+                currentMount.removeChild(rendererRef.current.domElement);
+              }
+            }
+            meshRef.current?.geometry.dispose();
+            meshRef.current?.material?.dispose();
+            rendererRef.current = null;
+            cameraRef.current = null;
+            sceneRef.current = null;
+            meshRef.current = null;
+            particlesDataRef.current = null;
+            setIsInitialized(false);
+          };
+        }, []);
+
+        return (
+          React.createElement('div', { className: "relative flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-indigo-900 to-black text-gray-300 overflow-hidden" },
+            React.createElement('div', {
+              ref: mountRef,
+              className: "absolute top-0 left-0 w-full h-full z-0"
+            }),
+            React.createElement('div', {
+              ref: cursorRef,
+              className: "fixed w-5 h-5 border-2 border-cyan-400 rounded-full pointer-events-none transform -translate-x-1/2 -translate-y-1/2 mix-blend-screen z-20 shadow-lg shadow-cyan-500/50",
+              style: { left: '-100px', top: '-100px' }
+            })
+            // Center UI overlay temporarily disabled:
+            // ,
+            // React.createElement('div', { className: "relative z-10 p-6 bg-black/50 backdrop-blur-sm rounded-lg shadow-xl text-center max-w-md mx-auto" },
+            //   React.createElement('h1', { className: "text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400 mb-2" },
+            //     "Interactive Particle Toy"
+            //   ),
+            //   React.createElement('p', { className: "text-sm text-gray-400 mb-4" },
+            //     "Move your mouse to interact with the particles. Choose a shape below."
+            //   ),
+            //   React.createElement('div', { className: "flex justify-center space-x-3" },
+            //     React.createElement('button', {
+            //       onClick: () => setCurrentShape('idle'),
+            //       className: `px-4 py-2 rounded-md font-semibold transition-all duration-200 ${
+            //         currentShape === 'idle'
+            //           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg scale-105'
+            //           : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            //       }`
+            //     }, 'Idle Flow'),
+            //     React.createElement('button', {
+            //       onClick: () => setCurrentShape('sphere'),
+            //       className: `px-4 py-2 rounded-md font-semibold transition-all duration-200 ${
+            //         currentShape === 'sphere'
+            //           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg scale-105'
+            //           : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            //       }`
+            //     }, 'Sphere'),
+            //     React.createElement('button', {
+            //       onClick: () => setCurrentShape('torus'),
+            //       className: `px-4 py-2 rounded-md font-semibold transition-all duration-200 ${
+            //         currentShape === 'torus'
+            //           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg scale-105'
+            //           : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            //       }`
+            //     }, 'Torus')
+            //   )
+            // )
+          )
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ParticleToy));
+    </script>
+  </body>
+</html>

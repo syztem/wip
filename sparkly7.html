@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGL 2 GPGPU Particle System</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0d0d2b; }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl2');
+
+        if (!gl) {
+            alert('WebGL 2 not supported. Please use a modern browser.');
+            throw new Error('WebGL 2 not supported');
+        }
+
+        // Check for necessary extensions for rendering to float textures
+        const ext = gl.getExtension('EXT_color_buffer_float');
+        if (!ext) {
+            alert('EXT_color_buffer_float not supported. Cannot render to floating point textures.');
+            // Fallback attempt: check for OES_texture_float_linear maybe?
+            // For this complex effect, float rendering is really required.
+             console.error('EXT_color_buffer_float not supported');
+             // Continue anyway for browsers that support it implicitly (some mobile/desktop)
+        }
+
+        // --- Constants ---
+        const NUM_PARTICLES_SIDE = 512; // Number of particles along one side of the texture
+        const NUM_PARTICLES = NUM_PARTICLES_SIDE * NUM_PARTICLES_SIDE;
+        const TEXTURE_SIZE = NUM_PARTICLES_SIDE;
+
+        // GPGPU Textures will store vec4 (position or velocity + extra)
+        const PARTICLE_STATE_FORMAT = gl.RGBA;
+        const PARTICLE_STATE_TYPE = gl.FLOAT; // Requires EXT_color_buffer_float
+        const PARTICLE_STATE_INTERNAL_FORMAT = gl.RGBA32F; // Preferred if available/supported
+
+        const DAMPING = 0.95; // Velocity damping
+        const SPRING_CONSTANT = 0.0005; // Strength of attraction to target
+        const MOUSE_RADIUS = 0.1; // Radius of mouse interaction
+        const MOUSE_STRENGTH = 0.005; // Strength of mouse repulsion
+        const BASE_PARTICLE_SIZE = 1.0; // Base render size of particles
+        const MAX_PARTICLE_SIZE_VELOCITY_MULT = 10.0; // Max size based on velocity
+        const PARTICLE_BRIGHTNESS = 1.0; // Base brightness
+        const SPARKLE_STRENGTH = 0.5; // Simple sparkle effect strength
+
+        // Shape transition parameters
+        const SHAPE_DURATION = 5.0; // Seconds each shape holds
+        const TRANSITION_DURATION = 3.0; // Seconds each transition takes
+        const TOTAL_ANIM_DURATION = (SHAPE_DURATION + TRANSITION_DURATION) * 4; // Sphere -> Swirl -> Heart -> Spiky -> loop
+
+        // Mouse state
+        let mouseX = 0;
+        let mouseY = 0;
+        let mouseIsDown = false; // Not used in this simple example, but good for interactions
+
+        // Camera state (simple static perspective)
+        const cameraZ = 3.0;
+        const projectionMatrix = mat4.create();
+        const viewMatrix = mat4.create();
+        const identityMatrix = mat4.create();
+        mat4.identity(identityMatrix);
+
+        // Animation state
+        let lastTime = 0;
+        let time = 0;
+        let shapeTimer = 0;
+
+        // --- WebGL Resources ---
+        let simulationProgram;
+        let renderProgram;
+        let positionTextures = [null, null]; // Ping pong
+        let velocityTextures = [null, null]; // Ping pong
+        let simulationFBOs = [null, null]; // Ping pong
+        let targetShapeTextures = []; // Array of textures, one for each shape
+        let currentTextureIndex = 0; // Index of the current state textures
+
+        // VAO for rendering (just a buffer of indices 0..N-1)
+        let renderVAO;
+        let particleIndexBuffer;
+
+        // --- Shaders (as strings) ---
+
+        // Vertex shader for the GPGPU simulation pass
+        // This just draws a screen-filling quad
+        const simulationVertexShaderSource = `#version 300 es
+            in vec4 position;
+            void main() {
+                gl_Position = position;
+            }
+        `;
+
+        // Fragment shader for the GPGPU simulation pass
+        // This updates particle positions and velocities
+        const simulationFragmentShaderSource = `#version 300 es
+            #extension GL_EXT_color_buffer_float : require
+            precision high蹲 float;
+
+            uniform sampler2D u_positionTexture;
+            uniform sampler2D u_velocityTexture;
+            uniform sampler2D u_targetShapeTexture1; // Current shape target
+            uniform sampler2D u_targetShapeTexture2; // Next shape target
+
+            uniform float u_deltaTime;
+            uniform vec3 u_mousePos;
+            uniform float u_mouseRadius;
+            uniform float u_mouseStrength;
+            uniform float u_damping;
+            uniform float u_springConstant;
+            uniform float u_shapeTransitionFactor; // 0 to 1
+
+            out vec4 out_newPosition;
+            out vec4 out_newVelocity;
+
+            void main() {
+                vec2 texCoord = gl_FragCoord.xy / float(${TEXTURE_SIZE}.0);
+
+                vec3 currentPos = texture(u_positionTexture, texCoord).xyz;
+                vec3 currentVel = texture(u_velocityTexture, texCoord).xyz;
+
+                vec3 targetPos1 = texture(u_targetShapeTexture1, texCoord).xyz;
+                vec3 targetPos2 = texture(u_targetShapeTexture2, texCoord).xyz;
+
+                // Interpolate target position based on transition factor
+                vec3 targetPos = mix(targetPos1, targetPos2, smoothstep(0.0, 1.0, u_shapeTransitionFactor));
+
+                // --- Physics Simulation ---
+
+                // Force towards target
+                vec3 forceToTarget = (targetPos - currentPos) * u_springConstant;
+
+                // Force from mouse (repulsion)
+                vec3 forceFromMouse = vec3(0.0);
+                vec3 diffToMouse = currentPos - u_mousePos;
+                float distSqToMouse = dot(diffToMouse, diffToMouse);
+
+                if (distSqToMouse < u_mouseRadius * u_mouseRadius) {
+                    float distToMouse = sqrt(distSqToMouse);
+                    // Apply stronger force closer to the mouse
+                    float strength = u_mouseStrength * (1.0 - distToMouse / u_mouseRadius);
+                    forceFromMouse = normalize(diffToMouse) * strength;
+                }
+
+                // Net force
+                vec3 totalForce = forceToTarget + forceFromMouse;
+
+                // Update velocity and position (Simple Euler integration)
+                vec3 newVel = currentVel + totalForce;
+                newVel *= u_damping; // Apply damping
+
+                vec3 newPos = currentPos + newVel * u_deltaTime;
+
+                out_newPosition = vec4(newPos, 1.0); // Store position in xyz, w can be used for age/flags
+                out_newVelocity = vec4(newVel, 0.0); // Store velocity in xyz
+            }
+        `;
+
+        // Vertex shader for rendering the particles
+        const renderVertexShaderSource = `#version 300 es
+            precision highp float;
+
+            in float a_particleIndex; // A single index 0 .. NUM_PARTICLES-1
+
+            uniform sampler2D u_positionTexture;
+            uniform sampler2D u_velocityTexture; // Optional: for size/color variation
+            uniform sampler2D u_targetShapeTexture; // Optional: for color lookup
+
+            uniform mat4 u_projectionMatrix;
+            uniform mat4 u_viewMatrix;
+
+            uniform float u_textureSize; // Size of the GPGPU textures
+            uniform float u_baseParticleSize;
+            uniform float u_maxSizeVelMult; // Max velocity multiplier for size
+
+            out vec3 v_color;
+            out float v_velocityMagnitude;
+            out vec3 v_position; // Pass world position for potential lighting/sparkle
+
+            void main() {
+                // Convert index to texture coordinate
+                float particleIndex = a_particleIndex;
+                vec2 texCoord = vec2(
+                    mod(particleIndex, u_textureSize),
+                    floor(particleIndex / u_textureSize)
+                ) / u_textureSize;
+
+                vec3 pos = texture(u_positionTexture, texCoord).xyz;
+                vec3 vel = texture(u_velocityTexture, texCoord).xyz;
+
+                v_position = pos;
+                v_velocityMagnitude = length(vel);
+
+                // Simple coloring based on position or a lookup from target texture
+                // Here, let's use the initial target position for color variety
+                 vec3 initialTargetPos = texture(u_targetShapeTexture, texCoord).xyz;
+                 v_color = abs(normalize(initialTargetPos) * 0.5 + 0.5); // Normalize and shift to positive range
+
+                // Transform position to screen space
+                gl_Position = u_projectionMatrix * u_viewMatrix * vec4(pos, 1.0);
+
+                // Set particle size (in pixels) - can vary based on velocity
+                float size = u_baseParticleSize + min(v_velocityMagnitude * u_maxSizeVelMult, u_baseParticleSize * 5.0);
+                gl_PointSize = size; // Requires enabling PROGRAM_POINT_SIZE
+            }
+        `;
+
+        // Fragment shader for rendering the particles
+        const renderFragmentShaderSource = `#version 300 es
+            precision highp float;
+
+            in vec3 v_color;
+            in float v_velocityMagnitude;
+            in vec3 v_position; // World position
+
+            uniform float u_time; // For simple animation/sparkle variation
+            uniform vec3 u_cameraPos; // Camera position for sparkle
+
+            uniform float u_brightness;
+            uniform float u_sparkleStrength;
+
+            out vec4 fragColor;
+
+            void main() {
+                // Create a circular particle using gl_PointCoord
+                vec2 uv = gl_PointCoord - 0.5;
+                float alpha = 1.0 - dot(uv, uv); // Fades out towards the edge
+
+                if (alpha <= 0.0) {
+                    discard; // Discard pixels outside the circle
+                }
+
+                // Base particle color
+                vec3 color = v_color * u_brightness;
+
+                // Simple sparkle effect: Add a bit of white based on view direction vs fake normal (pointing outwards from particle center)
+                // This is a simplification, proper lighting requires normals and light sources.
+                vec3 viewDir = normalize(u_cameraPos - v_position);
+                // Use velocity or random direction as a fake "normal" for simple sparkle
+                // Or just use a subtle pulsing based on time
+                float sparkle = mix(0.0, 1.0, (sin(u_time * 5.0 + dot(v_position, vec3(1.0, 2.0, 3.0)) * 10.0) * 0.5 + 0.5)) * u_sparkleStrength;
+
+                color += vec3(sparkle); // Add sparkle to the color
+
+                // Final color with alpha
+                fragColor = vec4(color, alpha);
+            }
+        `;
+
+        // --- Helper Functions ---
+
+        function compileShader(gl, source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexSource, fragmentSource) {
+            const vertexShader = compileShader(gl, vertexSource, gl.VERTEX_SHADER);
+            const fragmentShader = compileShader(gl, fragmentSource, gl.FRAGMENT_SHADER);
+
+            if (!vertexShader || !fragmentShader) {
+                return null;
+            }
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program linking error:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+
+            // Clean up shaders after linking
+            gl.detachShader(program, vertexShader);
+            gl.detachShader(program, fragmentShader);
+            gl.deleteShader(vertexShader);
+            gl.deleteShader(fragmentShader);
+
+            return program;
+        }
+
+        function createTexture(gl, width, height, format, type, internalFormat, data = null) {
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            // Use NEAREST for GPGPU textures to ensure we sample the exact pixel
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+            // gl.texImage2D(target, level, internalformat, width, height, border, format, type, data)
+            gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
+
+            gl.bindTexture(gl.TEXTURE_2D, null);
+            return texture;
+        }
+
+         function createFramebuffer(gl, texture) {
+            const fbo = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            // Attach the texture to the framebuffer's color attachment 0
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+            // Check if the FBO is complete
+            const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+            if (status !== gl.FRAMEBUFFER_COMPLETE) {
+                console.error('Framebuffer not complete:', status);
+                gl.deleteFramebuffer(fbo);
+                return null;
+            }
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            return fbo;
+        }
+
+
+        // --- Shape Generation ---
+
+        // Generate points for a sphere
+        function generateSpherePoints(numPoints, radius) {
+            const positions = new Float32Array(numPoints * 4); // Use vec4 for texture
+            for (let i = 0; i < numPoints; i++) {
+                // Fibonacci sphere distribution for somewhat even points
+                const phi = Math.acos(-1 + (2 * i) / (numPoints - 1));
+                const theta = Math.sqrt(numPoints * Math.PI) * phi;
+
+                const x = radius * Math.sin(phi) * Math.cos(theta);
+                const y = radius * Math.sin(phi) * Math.sin(theta);
+                const z = radius * Math.cos(phi);
+
+                positions[i * 4] = x;
+                positions[i * 4 + 1] = y;
+                positions[i * 4 + 2] = z;
+                positions[i * 4 + 3] = 1.0; // w component (unused here, but required for RGBA)
+            }
+            return positions;
+        }
+
+        // Generate points for a swirling shape (e.g., spiraling inwards)
+        function generateSwirlPoints(numPoints, maxRadius, height, turns) {
+             const positions = new Float32Array(numPoints * 4);
+             for (let i = 0; i < numPoints; i++) {
+                 const t = (i / (numPoints - 1)) * turns * Math.PI * 2; // Angle over multiple turns
+                 const r = maxRadius * (1.0 - i / numPoints); // Radius decreases inwards
+                 const y = height * (i / numPoints - 0.5); // Vertical position
+
+                 const x = r * Math.cos(t);
+                 const z = r * Math.sin(t);
+
+                 positions[i * 4] = x;
+                 positions[i * 4 + 1] = y;
+                 positions[i * 4 + 2] = z;
+                 positions[i * 4 + 3] = 1.0;
+             }
+             // Randomize the order of points to mix them up from the previous shape
+             shuffleArray(positions, 4);
+             return positions;
+        }
+
+
+         // Generate points for a heart shape (based on 2D parametric)
+         function generateHeartPoints(numPoints, scale) {
+             const positions = new Float32Array(numPoints * 4);
+             for (let i = 0; i < numPoints; i++) {
+                 // 2D Heart Parametric: x = 16sin^3(t), y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)
+                 // Extend to 3D - use the index or another parameter for Z
+                 const t = (i / numPoints) * 2.0 * Math.PI; // Parameter t from 0 to 2*PI
+
+                 const x = 16 * Math.pow(Math.sin(t), 3) * scale;
+                 const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * scale; // Negative y to make point upwards
+
+                 // Simple Z spread - use the particle index/position along the spiral from the swirl
+                 // Or add noise based on index
+                 const z = (i / numPoints - 0.5) * scale * 0.5 + (Math.random() - 0.5) * scale * 0.1;
+
+
+                 positions[i * 4] = x;
+                 positions[i * 4 + 1] = y;
+                 positions[i * 4 + 2] = z;
+                 positions[i * 4 + 3] = 1.0;
+             }
+             // Randomize the order again
+             shuffleArray(positions, 4);
+             return positions;
+         }
+
+         // Generate points for an "explosion" or spiky shape (scattered from center)
+         function generateExplosionPoints(numPoints, maxRadius) {
+             const positions = new Float32Array(numPoints * 4);
+             for (let i = 0; i < numPoints; i++) {
+                 // Generate points randomly within a sphere
+                 const r = Math.random() * maxRadius;
+                 const theta = Math.random() * Math.PI * 2;
+                 const phi = Math.acos(Math.random() * 2 - 1); // Distribute elevation angles
+
+                 const x = r * Math.sin(phi) * Math.cos(theta);
+                 const y = r * Math.sin(phi) * Math.sin(theta);
+                 const z = r * Math.cos(phi);
+
+                 positions[i * 4] = x;
+                 positions[i * 4 + 1] = y;
+                 positions[i * 4 + 2] = z;
+                 positions[i * 4 + 3] = 1.0;
+             }
+              // Randomize the order again
+             shuffleArray(positions, 4);
+             return positions;
+         }
+
+         // Fisher-Yates (aka Knuth) Shuffle for Float32Array with itemSize
+         function shuffleArray(array, itemSize) {
+            const n = array.length / itemSize;
+            for (let i = n - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                // Swap items
+                for(let k=0; k<itemSize; ++k) {
+                    const temp = array[i * itemSize + k];
+                    array[i * itemSize + k] = array[j * itemSize + k];
+                    array[j * itemSize + k] = temp;
+                }
+            }
+         }
+
+
+        // --- Initialization ---
+
+        function init() {
+            // Create programs
+            simulationProgram = createProgram(gl, simulationVertexShaderSource, simulationFragmentShaderSource);
+            renderProgram = createProgram(gl, renderVertexShaderSource, renderFragmentShaderSource);
+
+            if (!simulationProgram || !renderProgram) {
+                console.error("Failed to create WebGL programs.");
+                return;
+            }
+
+            // --- GPGPU Setup ---
+
+            // Create textures for ping-ponging position and velocity
+            positionTextures[0] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT);
+            positionTextures[1] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT);
+            velocityTextures[0] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT);
+            velocityTextures[1] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT);
+
+            // Create FBOs to render to these textures
+            simulationFBOs[0] = createFramebuffer(gl, positionTextures[1]); // FBO 0 writes to texture 1
+            simulationFBOs[1] = createFramebuffer(gl, positionTextures[0]); // FBO 1 writes to texture 0
+            // Need to also attach velocity texture to the FBO for multiple render targets (MRT)
+            gl.bindFramebuffer(gl.FRAMEBUFFER, simulationFBOs[0]);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, velocityTextures[1], 0);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, simulationFBOs[1]);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, velocityTextures[0], 0);
+             gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Unbind FBO
+
+             // Need to tell WebGL which color attachments to draw to
+             gl.useProgram(simulationProgram);
+             gl.bindFramebuffer(gl.FRAMEBUFFER, simulationFBOs[0]); // Bind an FBO to set draw buffers
+             gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]); // Specify MRTs
+             gl.bindFramebuffer(gl.FRAMEBUFFER, simulationFBOs[1]); // Bind the other FBO
+             gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]); // Specify MRTs
+             gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Unbind FBO
+
+
+            // Create texture for target shapes
+            const spherePoints = generateSpherePoints(NUM_PARTICLES, 1.0);
+            const swirlPoints = generateSwirlPoints(NUM_PARTICLES, 1.5, 2.0, 3.0); // maxRadius, height, turns
+            const heartPoints = generateHeartPoints(NUM_PARTICLES, 0.1); // scale
+            const explosionPoints = generateExplosionPoints(NUM_PARTICLES, 3.0); // maxRadius
+
+            targetShapeTextures[0] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT, spherePoints);
+            targetShapeTextures[1] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT, swirlPoints);
+            targetShapeTextures[2] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT, heartPoints);
+            targetShapeTextures[3] = createTexture(gl, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, PARTICLE_STATE_INTERNAL_FORMAT, explosionPoints);
+
+            // Initialize particle positions to the first shape, velocities to zero
+            const initialPositions = spherePoints; // Start as a sphere
+            const initialVelocities = new Float32Array(NUM_PARTICLES * 4).fill(0.0); // All zeros
+
+            gl.bindTexture(gl.TEXTURE_2D, positionTextures[0]);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, initialPositions);
+            gl.bindTexture(gl.TEXTURE_2D, velocityTextures[0]);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, PARTICLE_STATE_FORMAT, PARTICLE_STATE_TYPE, initialVelocities);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+
+            // --- Rendering Setup ---
+
+            // Create a VAO for the rendering pass
+            renderVAO = gl.createVertexArray();
+            gl.bindVertexArray(renderVAO);
+
+            // Create a buffer for particle indices (0, 1, 2, ..., NUM_PARTICLES-1)
+            particleIndexBuffer = gl.createBuffer();
+            const particleIndices = new Float32Array(NUM_PARTICLES);
+            for (let i = 0; i < NUM_PARTICLES; ++i) {
+                particleIndices[i] = i;
+            }
+            gl.bindBuffer(gl.ARRAY_BUFFER, particleIndexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, particleIndices, gl.STATIC_DRAW);
+
+            // Specify how the vertex shader attribute reads from the index buffer
+            const indexAttribLocation = gl.getAttribLocation(renderProgram, 'a_particleIndex');
+            gl.enableVertexAttribArray(indexAttribLocation);
+            gl.vertexAttribPointer(indexAttribLocation, 1, gl.FLOAT, false, 0, 0); // size = 1 (float), type = float
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, null);
+            gl.bindVertexArray(null); // Unbind VAO
+
+            // Enable point sprites and blending
+            gl.enable(gl.PROGRAM_POINT_SIZE);
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.ONE, gl.ONE); // Additive blending (good for bright points on dark background)
+            // Alternative: gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // Standard alpha blending
+
+            // Set initial camera position
+            mat4.lookAt(viewMatrix, [0, 0, cameraZ], [0, 0, 0], [0, 1, 0]); // Camera at (0,0,cameraZ) looking at origin
+
+             // Set up mouse event listener
+            canvas.addEventListener('mousemove', handleMouseMove);
+        }
+
+        function handleMouseMove(event) {
+             // Get mouse coordinates relative to the canvas
+            const rect = canvas.getBoundingClientRect();
+            const canvasX = event.clientX - rect.left;
+            const canvasY = event.clientY - rect.top;
+
+            // Convert to normalized device coordinates (-1 to 1)
+            const ndcX = (canvasX / canvas.width) * 2 - 1;
+            const ndcY = -(canvasY / canvas.height) * 2 + 1; // Y is flipped in WebGL
+
+            // Simple mapping to a 3D plane (e.g., Z=0 or Z slightly in front of particles)
+            // A more accurate method would involve raycasting.
+            // Let's assume the particles are generally around the origin (0,0,0)
+            mouseX = ndcX * cameraZ; // Scale mouse X by distance to mimic perspective
+            mouseY = ndcY * cameraZ; // Scale mouse Y by distance
+
+            // Pass this to a uniform or update a global state
+            // The simulation shader will use u_mousePos
+        }
+
+
+        // --- Render Loop ---
+
+        function animate(currentTime) {
+            currentTime *= 0.001; // convert to seconds
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            time = currentTime; // Update global time
+
+            // Update shape timer and transition factor
+            shapeTimer = time % TOTAL_ANIM_DURATION;
+            const currentShapeIndex = Math.floor(shapeTimer / (SHAPE_DURATION + TRANSITION_DURATION));
+            const timeIntoStage = shapeTimer % (SHAPE_DURATION + TRANSITION_DURATION);
+            let transitionFactor = 0.0; // 0 = current shape, 1 = next shape
+            let nextShapeIndex = (currentShapeIndex + 1) % targetShapeTextures.length;
+
+            if (timeIntoStage > SHAPE_DURATION) {
+                 transitionFactor = (timeIntoStage - SHAPE_DURATION) / TRANSITION_DURATION;
+            }
+
+
+            // --- GPGPU Simulation Pass ---
+            const currentPosTexture = positionTextures[currentTextureIndex];
+            const currentVelTexture = velocityTextures[currentTextureIndex];
+            const nextPosTexture = positionTextures[1 - currentTextureIndex];
+            const nextVelTexture = velocityTextures[1 - currentTextureIndex];
+            const targetShape1 = targetShapeTextures[currentShapeIndex % targetShapeTextures.length];
+            const targetShape2 = targetShapeTextures[nextShapeIndex]; // Next shape loops back
+
+            gl.useProgram(simulationProgram);
+
+            // Bind the FBO that writes to the *next* textures
+            gl.bindFramebuffer(gl.FRAMEBUFFER, simulationFBOs[1 - currentTextureIndex]);
+             gl.viewport(0, 0, TEXTURE_SIZE, TEXTURE_SIZE); // Set viewport to texture size
+
+            // Bind the *current* state textures as inputs
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, currentPosTexture);
+            gl.uniform1i(gl.getUniformLocation(simulationProgram, 'u_positionTexture'), 0);
+
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, currentVelTexture);
+            gl.uniform1i(gl.getUniformLocation(simulationProgram, 'u_velocityTexture'), 1);
+
+            // Bind target shape textures
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, targetShape1);
+            gl.uniform1i(gl.getUniformLocation(simulationProgram, 'u_targetShapeTexture1'), 2);
+
+            gl.activeTexture(gl.TEXTURE3);
+            gl.bindTexture(gl.TEXTURE_2D, targetShape2);
+            gl.uniform1i(gl.getUniformLocation(simulationProgram, 'u_targetShapeTexture2'), 3);
+
+            // Set simulation uniforms
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_deltaTime'), deltaTime);
+            gl.uniform3f(gl.getUniformLocation(simulationProgram, 'u_mousePos'), mouseX, mouseY, 0.0); // Simple Z=0 plane for mouse interaction
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_mouseRadius'), MOUSE_RADIUS);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_mouseStrength'), MOUSE_STRENGTH);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_damping'), DAMPING);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_springConstant'), SPRING_CONSTANT);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_shapeTransitionFactor'), transitionFactor);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, 'u_textureSize'), TEXTURE_SIZE);
+
+
+            // Draw a quad to cover the texture, executing the fragment shader for each particle
+            // A simple way is to use a triangle strip or two triangles covering NDC space (-1 to 1)
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // Assumes a quad buffer was bound (we didn't explicitly bind one here, but the simplest way if the only attribute is position is to hardcode it in the shader or rely on default VAO/buffer)
+
+            // For simplicity, we can define the quad positions directly in the vertex shader
+            // if only the position attribute is needed.
+            // Let's add a simple quad buffer for clarity, though often skipped if only used for GPGPU.
+            // We need *some* attribute array enabled for draw calls to work with a VAO.
+            // Since our GPGPU VS only takes position, we'll define that quad buffer.
+
+             // Re-binding a dummy quad buffer if needed for the drawArrays call
+             // This part is slightly tricky without a dedicated GPGPU quad setup.
+             // A more robust GPGPU setup would have a dedicated VAO/buffer for the screen quad.
+             // Let's assume for this single-file example, the shader implicitly handles this or
+             // we'd set up a quad buffer once and bind it here.
+             // For now, rely on the fact that drawArrays(TRIANGLE_STRIP, 0, 4) works with no attributes IF the VS generates gl_Position.
+             // A safer approach: use a dummy buffer or VAO. Let's create a dummy one.
+             if (!simulationProgram.quadVAO) {
+                 simulationProgram.quadVAO = gl.createVertexArray();
+                 gl.bindVertexArray(simulationProgram.quadVAO);
+                 simulationProgram.quadBuffer = gl.createBuffer();
+                 gl.bindBuffer(gl.ARRAY_BUFFER, simulationProgram.quadBuffer);
+                 // Vertices for a screen-filling quad
+                 const quadVertices = new Float32Array([
+                     -1.0, -1.0,
+                      1.0, -1.0,
+                     -1.0,  1.0,
+                      1.0,  1.0,
+                 ]);
+                 gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+                 const posAttrib = gl.getAttribLocation(simulationProgram, 'position');
+                 gl.enableVertexAttribArray(posAttrib);
+                 gl.vertexAttribPointer(posAttrib, 2, gl.FLOAT, false, 0, 0);
+                 gl.bindVertexArray(null);
+             }
+             gl.bindVertexArray(simulationProgram.quadVAO);
+             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+             gl.bindVertexArray(null);
+
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Unbind FBO
+
+
+            // Swap textures for the next frame
+            currentTextureIndex = 1 - currentTextureIndex;
+
+
+            // --- Rendering Pass ---
+
+            // Resize canvas if necessary (handle DPR)
+            resizeCanvas();
+
+            gl.useProgram(renderProgram);
+
+            // Bind the *current* position and velocity textures
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, positionTextures[currentTextureIndex]);
+            gl.uniform1i(gl.getUniformLocation(renderProgram, 'u_positionTexture'), 0);
+
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, velocityTextures[currentTextureIndex]);
+            gl.uniform1i(gl.getUniformLocation(renderProgram, 'u_velocityTexture'), 1);
+
+            // Bind a target shape texture (e.g., for color lookup based on original particle index)
+             gl.activeTexture(gl.TEXTURE2);
+             gl.bindTexture(gl.TEXTURE_2D, targetShapeTextures[0]); // Use shape 0 texture for color mapping
+             gl.uniform1i(gl.getUniformLocation(renderProgram, 'u_targetShapeTexture'), 2);
+
+
+            // Set rendering uniforms
+            gl.uniformMatrix4fv(gl.getUniformLocation(renderProgram, 'u_projectionMatrix'), false, projectionMatrix);
+            gl.uniformMatrix4fv(gl.getUniformLocation(renderProgram, 'u_viewMatrix'), false, viewMatrix);
+            gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_textureSize'), TEXTURE_SIZE);
+            gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_baseParticleSize'), BASE_PARTICLE_SIZE);
+            gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_maxSizeVelMult'), MAX_PARTICLE_SIZE_VELOCITY_MULT);
+            gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_time'), time);
+            gl.uniform3f(gl.getUniformLocation(renderProgram, 'u_cameraPos'), 0.0, 0.0, cameraZ); // Pass camera pos for sparkle
+            gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_brightness'), PARTICLE_BRIGHTNESS);
+             gl.uniform1f(gl.getUniformLocation(renderProgram, 'u_sparkleStrength'), SPARKLE_STRENGTH);
+
+
+            // Clear the screen
+            gl.clearColor(0.05, 0.05, 0.1, 1.0); // Dark blue background
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            // Bind the VAO and draw the particles
+            gl.bindVertexArray(renderVAO);
+            gl.drawArrays(gl.POINTS, 0, NUM_PARTICLES);
+            gl.bindVertexArray(null);
+
+            // Request the next frame
+            requestAnimationFrame(animate);
+        }
+
+        function resizeCanvas() {
+            const displayWidth = canvas.clientWidth;
+            const displayHeight = canvas.clientHeight;
+            const devicePixelRatio = window.devicePixelRatio || 1;
+
+            const actualWidth = Math.floor(displayWidth * devicePixelRatio);
+            const actualHeight = Math.floor(displayHeight * devicePixelRatio);
+
+            if (canvas.width !== actualWidth || canvas.height !== actualHeight) {
+                canvas.width = actualWidth;
+                canvas.height = actualHeight;
+                gl.viewport(0, 0, actualWidth, actualHeight);
+
+                // Update projection matrix for perspective
+                const aspectRatio = actualWidth / actualHeight;
+                mat4.perspective(projectionMatrix, Math.PI / 4, aspectRatio, 0.1, 100); // FOV 45 degrees
+            }
+        }
+
+
+        // Start the show
+        init();
+        if (simulationProgram && renderProgram && simulationFBOs[0] && simulationFBOs[1]) {
+             // Need to set up the dummy quad VAO *before* the first drawArrays call in simulation
+            // Let's move this creation to init or just before the first drawArrays.
+            // For simplicity within this single file, creating it inside animate the first time is okay,
+            // or move it to init() like done above.
+            requestAnimationFrame(animate);
+        }
+
+
+    </script>
+</body>
+</html>
