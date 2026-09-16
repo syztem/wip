@@ -83,6 +83,8 @@ export function createProps() {
     update(t) {
       const s = Math.sin((t / 30) * Math.PI * 2);
       for (const f of flags) f.rotation.y = 0.35 * s;
+      waterMat.emissiveIntensity = 0.28 + 0.12 * (0.5 + 0.5 * Math.sin(t * 2.1));
+      sheet.position.y = 7 + 0.08 * Math.sin(t * 1.7);
     },
   };
 }

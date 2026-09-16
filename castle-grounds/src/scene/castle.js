@@ -102,13 +102,17 @@ export function createCastle(env) {
   box(stone, 1.1, 5.4, 1.4, -2.4, 3.7, 11.7, root);
   box(stone, 1.1, 5.4, 1.4, 2.4, 3.7, 11.7, root);
   box(gold, 0.35, 0.35, 0.35, 0.7, 3.5, 12.2, root);
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(3.1, 4.5), stoneDark);
+  door.position.set(0, 3.35, 12.22);
+  root.add(door);
 
   // steps
   for (let s = 0; s < 6; s++) {
     box(stone, 8 - s * 0.35, 0.38, 1.15, 0, 0.25 + s * 0.38, 14.2 + s * 0.55, root);
   }
 
-  // stained glass (front)
+  // stained glass (front) — dark well behind so transmission reads
+  box(stoneDark, 5.4, 7.6, 0.4, 0, 12.6, 10.85, root, false);
   const pane = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 7.4), glass);
   pane.position.set(0, 12.6, 11.25);
   pane.castShadow = false;
@@ -123,6 +127,8 @@ export function createCastle(env) {
     [8, 10, -11.15],
     [0, 24, 4.1],
   ]) {
+    const insetZ = wz > 0 ? wz - 0.22 : wz + 0.22;
+    box(stoneDark, 2.05, 2.85, 0.35, wx, wy, insetZ, root, false);
     const w = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.6), glass);
     w.position.set(wx, wy, wz);
     if (wz < 0) w.rotation.y = Math.PI;

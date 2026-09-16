@@ -15,8 +15,11 @@ import { createProps } from './scene/props.js';
 const orbitMode = /(?:\?|&)orbit=1(?:&|$)/.test(location.search);
 const debug = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
 const forceGLQuery = /(?:\?|&)webgl=1(?:&|$)/.test(location.search);
+const wantBloom = /(?:\?|&)bloom=1(?:&|$)/.test(location.search);
 const errEl = document.getElementById('err');
 const fpsEl = document.getElementById('fps');
+
+const CLEAR = 0x7eb7e8;
 
 function fail(msg, err) {
   console.error(msg, err);
@@ -53,9 +56,10 @@ function applyRenderer(renderer, webgl) {
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.55;
+  renderer.toneMappingExposure = 0.95;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(CLEAR, 1);
   document.body.appendChild(renderer.domElement);
 }
 
@@ -91,35 +95,28 @@ async function main() {
   }
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x9ec8e8, 0.0065);
+  scene.background = new THREE.Color(CLEAR);
+  scene.fog = new THREE.FogExp2(CLEAR, 0.0038);
 
   const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.15, 2000000);
   camera.position.set(0.2, 1.72, 24.8);
   scene.add(camera);
 
-  let sky;
-  try {
-    sky = createSky();
-    scene.add(sky.mesh);
-  } catch (e) {
-    console.warn('SkyMesh miss', e);
-    const sunDir = new THREE.Vector3();
-    sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(44), THREE.MathUtils.degToRad(28));
-    sky = { mesh: null, sunDir };
-  }
+  const sky = createSky({ useMesh: !webgl });
+  if (sky.mesh) scene.add(sky.mesh);
 
   let env = null;
   try {
     env = await loadEnv();
     scene.environment = env;
-    scene.environmentIntensity = 0.38;
+    scene.environmentIntensity = 0.55;
   } catch (e) {
     console.warn('HDR miss', e);
   }
 
-  const hemi = new THREE.HemisphereLight(0xa8d4ff, 0x3a4a28, 0.48);
+  const hemi = new THREE.HemisphereLight(0xc5e2ff, 0x4a5a30, 0.72);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff1d0, 2.6);
+  const sun = new THREE.DirectionalLight(0xfff1d0, 2.15);
   sun.position.copy(sky.sunDir).multiplyScalar(90);
   sun.castShadow = true;
   const shadowRes = webgl ? 1024 : 2048;
@@ -133,23 +130,21 @@ async function main() {
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.04;
   scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xb7d4ff, 0.38);
+  fill.position.set(-45, 28, 55);
+  scene.add(fill);
 
-  const terrain = createTerrain();
-  scene.add(terrain.group);
-
-  const castle = createCastle(env);
-  scene.add(castle.group);
-
-  const bridge = createBridge();
-  scene.add(bridge.group);
+  scene.add(createTerrain().group);
+  scene.add(createCastle(env).group);
+  scene.add(createBridge().group);
 
   let water;
   try {
-    water = createWater();
+    water = createWater({ nodes: !webgl });
     scene.add(water.mesh);
-    if (env) water.mesh.material.envMapIntensity = 1.2;
+    if (env && water.mesh.material) water.mesh.material.envMapIntensity = 1.15;
   } catch (e) {
-    console.warn('TSL water miss', e);
+    console.warn('water miss', e);
   }
 
   const trees = createTrees();
@@ -170,33 +165,48 @@ async function main() {
     controls.maxDistance = 120;
   }
 
-  const post = createPost(renderer, scene, camera);
+  const post = createPost(renderer, scene, camera, {
+    bloomEnabled: wantBloom && !webgl,
+  });
 
   const clock = new THREE.Timer();
   clock.connect(document);
   let frames = 0;
   let fpsT = 0;
+  let shown = false;
 
   renderer.setAnimationLoop(() => {
-    clock.update();
-    const t = clock.getElapsed();
-    const dt = clock.getDelta();
+    try {
+      clock.update();
+      const t = clock.getElapsed();
+      const dt = clock.getDelta();
 
-    if (!orbitMode) flyby.apply(t);
-    else controls.update();
+      if (!orbitMode) flyby.apply(t);
+      else controls.update();
 
-    mario.update(t);
-    trees.update(t);
-    props.update(t);
+      mario.update(t);
+      trees.update(t);
+      props.update(t);
 
-    post.render();
+      post.render();
 
-    frames++;
-    fpsT += dt;
-    if (fpsEl && fpsT >= 0.5) {
-      fpsEl.textContent = `${Math.round(frames / fpsT)}`;
-      frames = 0;
-      fpsT = 0;
+      if (!shown) {
+        shown = true;
+        document.body.classList.add('live');
+      }
+
+      if (debug && fpsEl) {
+        frames++;
+        fpsT += dt;
+        if (fpsT >= 0.5) {
+          fpsEl.textContent = `${Math.round(frames / fpsT)}`;
+          frames = 0;
+          fpsT = 0;
+        }
+      }
+    } catch (e) {
+      renderer.setAnimationLoop(null);
+      fail('render failed', e);
     }
   });
 
@@ -206,7 +216,6 @@ async function main() {
     renderer.setSize(innerWidth, innerHeight);
   });
 
-  document.body.classList.add('live');
   if (debug) {
     console.info('castle-grounds loop', LOOP, 's', post.enabled ? 'bloom' : 'no-bloom', webgl ? 'webgl2' : 'webgpu');
   }

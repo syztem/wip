@@ -2,8 +2,16 @@ import * as THREE from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
-/** TSL bloom: pass → bloom → add. Loop must call pipeline.render(), not renderer.render. */
-export function createPost(renderer, scene, camera) {
+/** Bloom is opt-in (`?bloom=1`) and WebGPU-only. Pipeline-as-only-path paints black on WebGL. */
+export function createPost(renderer, scene, camera, { bloomEnabled = false } = {}) {
+  const fallback = {
+    enabled: false,
+    bloomPass: null,
+    render() {
+      renderer.render(scene, camera);
+    },
+  };
+  if (!bloomEnabled) return fallback;
   try {
     const renderPipeline = new THREE.RenderPipeline(renderer);
     const scenePass = pass(scene, camera, {
@@ -15,7 +23,7 @@ export function createPost(renderer, scene, camera) {
       resolveStencilBuffer: false,
     });
     const scenePassColor = scenePass.getTextureNode('output');
-    const bloomPass = bloom(scenePassColor, 0.42, 0.38, 0.88);
+    const bloomPass = bloom(scenePassColor, 0.28, 0.32, 0.9);
     renderPipeline.outputNode = scenePassColor.add(bloomPass);
     return {
       enabled: true,
@@ -26,12 +34,6 @@ export function createPost(renderer, scene, camera) {
     };
   } catch (err) {
     console.warn('bloom soft-fail', err);
-    return {
-      enabled: false,
-      bloomPass: null,
-      render() {
-        renderer.render(scene, camera);
-      },
-    };
+    return fallback;
   }
 }

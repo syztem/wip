@@ -4,8 +4,29 @@ import {
   mul, time, uniform, Fn, transformNormalToView,
 } from 'three/tsl';
 
+function stillWater() {
+  const material = new THREE.MeshPhysicalMaterial({
+    color: 0x1a6f88,
+    roughness: 0.16,
+    metalness: 0.06,
+    transparent: true,
+    opacity: 0.9,
+    transmission: 0.22,
+    thickness: 0.55,
+    ior: 1.333,
+  });
+  const geometry = new THREE.PlaneGeometry(64, 64, 48, 48);
+  geometry.rotateX(-Math.PI * 0.5);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(0, -1.08, -38);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 1;
+  return { mesh };
+}
+
 /** Calmer Journey-sea contract. Speeds chosen for ~integer cycles per 30s. */
-export function createWater() {
+export function createWater({ nodes = true } = {}) {
+  if (!nodes) return stillWater();
   const material = new THREE.MeshStandardNodeMaterial({
     color: '#1a6f88',
     roughness: 0.12,
