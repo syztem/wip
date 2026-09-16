@@ -1,206 +1,198 @@
 import * as THREE from 'three/webgpu';
-import { FogExp2, Clock } from 'three';
+import { FogExp2, Timer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { createFlyby } from './flyby.js';
+import { createSky } from './scene/sky.js';
 import { createTerrain } from './scene/terrain.js';
 import { createCastle } from './scene/castle.js';
-import { createSky } from './scene/sky.js';
-import { createWater } from './scene/water.js';
 import { createTrees } from './scene/trees.js';
-import { createProps } from './scene/props.js';
+import { createWater } from './scene/water.js';
 import { createMario } from './scene/mario.js';
-import { createPost } from './post.js';
+import { createProps } from './scene/props.js';
+import { createBridge } from './scene/bridge.js';
+import { createFlyby } from './flyby.js';
+import { createPost, tryCreateBloom } from './post.js';
+import { wrap } from './hour.js';
 
-const CLEAR = 0x7eb7e8;
-const debug = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
-const orbit = /(?:\?|&)orbit=1(?:&|$)/.test(location.search);
-const forceGLQuery = /(?:\?|&)webgl=1(?:&|$)/.test(location.search);
-const wantGPUQuery = /(?:\?|&)webgpu=1(?:&|$)/.test(location.search);
-const bloomQuery = /(?:\?|&)bloom=1(?:&|$)/.test(location.search);
-const errEl = document.getElementById('err');
-const fpsEl = document.getElementById('fps');
+const params = new URLSearchParams(location.search);
+const debug = params.has('debug');
+const proof = params.get('proof') === '1';
+const orbit = params.has('orbit');
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+const wantBloom = !proof && params.get('bloom') !== '0' && (params.get('bloom') === '1' || !isSafari);
 
-function fail(msg, err) {
-  console.error(msg, err);
+function asset(rel) {
+  return new URL(rel, document.baseURI).href;
+}
+
+function die(err) {
+  const el = document.getElementById('err');
   document.body.classList.add('dead');
   document.body.classList.remove('live');
-  if (errEl) {
-    errEl.style.display = 'grid';
-    errEl.textContent = msg;
+  if (el) {
+    el.style.display = 'grid';
+    el.textContent = (err && err.message) ? err.message : String(err);
   }
+  console.error(err);
 }
 
-function asset(path) {
-  return new URL(path, import.meta.url).href;
+const renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false });
+renderer.setClearColor(0x7eb7e8, 1);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+if (!proof) {
+  scene.fog = new FogExp2(0x9ec9e8, 0.012);
+  scene.background = new THREE.Color(0x7eb7e8);
+} else {
+  scene.background = new THREE.Color(0x141018);
+  renderer.setClearColor(0x141018, 1);
 }
 
-function uaFlags() {
-  const ua = navigator.userAgent;
-  const firefox = /\bFirefox\b/.test(ua);
-  const safari = /\bSafari\b/.test(ua) && !/\b(?:Chrome|Chromium|CriOS|Edg|OPR|Firefox)\b/.test(ua);
-  return { safari, firefox };
+const camera = new THREE.PerspectiveCamera(48, 1, 0.12, 2000);
+camera.position.set(18, 10, 28);
+
+const timer = new Timer();
+timer.connect(document);
+
+let controls = null;
+if (orbit) {
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.set(0, 8, -20);
 }
 
-function withTimeout(promise, ms, label) {
-  let id;
-  const timeout = new Promise((_, reject) => {
-    id = setTimeout(() => reject(new Error(`${label} timeout (${ms}ms)`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
+function resize() {
+  const w = innerWidth;
+  const h = Math.max(1, innerHeight);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+resize();
+addEventListener('resize', resize, { passive: true });
+
+let envMap = null;
+try {
+  const hdr = await new HDRLoader().loadAsync(asset('public/hdr/env.hdr'));
+  hdr.mapping = THREE.EquirectangularReflectionMapping;
+  envMap = hdr;
+  scene.environment = envMap;
+} catch (e) {
+  console.warn('HDR miss', e);
 }
 
-function applyRenderer(renderer, webgl) {
-  renderer.setPixelRatio(Math.min(devicePixelRatio, webgl ? 1.25 : 1.75));
-  renderer.setSize(innerWidth, innerHeight);
-  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(CLEAR, 1);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  renderer.domElement.style.background = '#7eb7e8';
-  document.body.appendChild(renderer.domElement);
-}
+const sky = createSky({ useMesh: !proof });
+if (!proof) scene.add(sky.mesh);
 
-async function bootRenderer() {
-  const common = { antialias: true, powerPreference: 'high-performance' };
-  const { safari, firefox } = uaFlags();
-  // Safari/Firefox: WebGPU init hangs or presents black. Chrome still tries GPU.
-  const wantGL = forceGLQuery
-    || (!wantGPUQuery && (safari || firefox || typeof navigator.gpu === 'undefined'));
+const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x3d5a32, proof ? 0.12 : 0.55);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1d0, proof ? 0.15 : 2.35);
+sun.position.copy(sky.sunDir).multiplyScalar(80);
+sun.castShadow = !proof;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 4;
+sun.shadow.camera.far = 160;
+sun.shadow.camera.left = -48;
+sun.shadow.camera.right = 48;
+sun.shadow.camera.top = 36;
+sun.shadow.camera.bottom = -36;
+sun.shadow.bias = -0.00025;
+sun.shadow.normalBias = 0.035;
+scene.add(sun);
 
-  const make = async (forceWebGL) => {
-    const renderer = new THREE.WebGPURenderer({ ...common, forceWebGL });
-    await withTimeout(
-      renderer.init(),
-      forceWebGL ? 6000 : 2000,
-      forceWebGL ? 'WebGL2 init' : 'WebGPU init',
-    );
-    applyRenderer(renderer, forceWebGL);
-    return renderer;
-  };
+let terrain = null;
+let trees = null;
+let water = null;
+let props = null;
+let bridge = null;
 
-  try {
-    return { renderer: await make(wantGL), webgl: wantGL };
-  } catch (e) {
-    console.warn('renderer init failed, WebGL2', e);
-    document.querySelectorAll('canvas').forEach((c) => c.remove());
-    return { renderer: await make(true), webgl: true };
-  }
-}
-
-async function main() {
-  const { renderer, webgl } = await bootRenderer();
-  if (debug) console.info('boot', { webgl, gpu: !!navigator.gpu, ua: navigator.userAgent });
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(CLEAR);
-  scene.fog = new FogExp2(CLEAR, 0.0038);
-
-  const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.15, 2000000);
-  scene.add(camera);
-
-  try {
-    const env = await new HDRLoader().loadAsync(asset('../public/hdr/env.hdr'));
-    env.mapping = THREE.EquirectangularReflectionMapping;
-    scene.environment = env;
-    scene.environmentIntensity = 0.55;
-  } catch (e) {
-    console.warn('HDR miss', e);
-  }
-
-  const hemi = new THREE.HemisphereLight(0xc8dff5, 0x3a5a28, 0.55);
-  scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff1d0, 2.35);
-  sun.position.set(28, 42, 18);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 120;
-  sun.shadow.camera.left = -50;
-  sun.shadow.camera.right = 50;
-  sun.shadow.camera.top = 50;
-  sun.shadow.camera.bottom = -50;
-  sun.shadow.bias = -0.0004;
-  scene.add(sun);
-
-  const sky = createSky({ useMesh: !webgl });
-  scene.add(sky.mesh);
-  sun.position.copy(sky.sunDir).multiplyScalar(60);
-
-  const terrain = createTerrain();
-  scene.add(terrain.mesh);
-  if (terrain.path) scene.add(terrain.path);
-
-  const castle = createCastle(scene.environment);
-  scene.add(castle.group);
-
-  const water = createWater({ nodes: !webgl });
-  scene.add(water.mesh);
-
-  const trees = createTrees();
+if (!proof) {
+  terrain = createTerrain();
+  scene.add(terrain.group);
+  trees = createTrees();
   scene.add(trees.group);
-
-  const props = createProps();
-  scene.add(props.group);
-
-  const mario = createMario();
-  scene.add(mario.group);
-
-  const flyby = createFlyby(camera);
-  flyby.apply(0);
-
-  let controls = null;
-  if (orbit) {
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 8, -36);
+  try {
+    water = createWater({ nodes: true });
+  } catch (e) {
+    console.warn('water nodes miss', e);
+    water = createWater({ nodes: false });
   }
-
-  const post = createPost(renderer, scene, camera, {
-    bloomEnabled: bloomQuery && !webgl,
-  });
-
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
-
-  const clock = new Clock();
-  let frames = 0;
-  let fpsT = 0;
-  let shown = false;
-
-  renderer.setAnimationLoop(() => {
-    try {
-      const dt = clock.getDelta();
-      const t = clock.getElapsedTime();
-      if (!orbit) flyby.apply(t);
-      else controls.update();
-      mario.update(t);
-      trees.update(t);
-      props.update(t);
-      post.render();
-      if (!shown) {
-        shown = true;
-        document.body.classList.add('live');
-      }
-      if (debug && fpsEl) {
-        frames++;
-        fpsT += dt;
-        if (fpsT >= 0.5) {
-          fpsEl.textContent = `${Math.round(frames / fpsT)} fps · ${webgl ? 'webgl2' : 'webgpu'}${post.enabled ? ' · bloom' : ''}`;
-          frames = 0;
-          fpsT = 0;
-        }
-      }
-    } catch (e) {
-      renderer.setAnimationLoop(null);
-      fail('render failed', e);
-    }
-  });
+  scene.add(water.mesh);
+  props = createProps();
+  scene.add(props.group);
+  bridge = createBridge();
+  scene.add(bridge.group);
 }
 
-main().catch((e) => fail('boot failed', e));
+const castle = createCastle(envMap);
+scene.add(castle.group);
+
+const mario = createMario();
+scene.add(mario.group);
+
+const flyby = createFlyby(camera);
+if (!orbit) flyby.apply(0);
+
+let post = createPost(renderer, scene, camera);
+try {
+  await renderer.init();
+} catch (e) {
+  die(e);
+  throw e;
+}
+
+if (wantBloom) {
+  try {
+    post = await tryCreateBloom(renderer, scene, camera);
+  } catch (e) {
+    console.warn('bloom miss', e);
+  }
+}
+
+document.body.classList.add('live');
+
+const fpsEl = document.getElementById('fps');
+let frames = 0;
+let fpsT = performance.now();
+let fpsLast = '';
+
+renderer.setAnimationLoop((timestamp) => {
+  timer.update(timestamp);
+  const t = timer.getElapsed();
+  const u = wrap(t);
+  if (!orbit) flyby.apply(u);
+  else controls.update();
+  mario.update(u, bridge);
+  if (trees) trees.update(u);
+  if (props) props.update(u);
+  if (castle.nave) castle.nave.update(u);
+
+  frames++;
+  const now = timestamp;
+  if (now - fpsT > 250) {
+    const fps = Math.round((frames * 1000) / (now - fpsT));
+    frames = 0;
+    fpsT = now;
+    const label = post.enabled ? `${fps} · bloom` : `${fps}`;
+    if (fpsEl && label !== fpsLast) {
+      fpsEl.textContent = label;
+      fpsLast = label;
+    }
+  }
+  post.render();
+});
+
+if (debug) {
+  console.info('castle-grounds v2', {
+    backend: renderer.backend?.name,
+    proof,
+    bloom: post.enabled,
+    hdr: !!envMap,
+  });
+}

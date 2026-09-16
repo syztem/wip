@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { grassMap, dirtMap } from '../textures.js';
+import { KEEP_X, KEEP_Z } from './layout.js';
 
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -17,9 +18,7 @@ export function sampleHeight(x, z) {
     9 * Math.exp(-((x + 52) ** 2 + (z - 4) ** 2) / 980) +
     6 * Math.exp(-((x - 10) ** 2 + (z + 70) ** 2) / 1600);
 
-  const cx = 0;
-  const cz = -38;
-  const cr = Math.hypot(x - cx, z - cz);
+  const cr = Math.hypot(x - KEEP_X, z - KEEP_Z);
   const island = 1 - smoothstep(12, 16.2, cr);
   const moat = -2.15 * (smoothstep(15.5, 18.2, cr) * (1 - smoothstep(26.5, 30.5, cr)));
 
@@ -46,9 +45,7 @@ export function createTerrain() {
     const z = pos.getZ(i);
     const y = sampleHeight(x, z);
     pos.setY(i, y);
-    const r = Math.hypot(x, z - 6);
-    const pathBand = 1 - smoothstep(0, 2.6, Math.abs(x)) * (z > -8 && z < 26 ? 1 : 0);
-    const pathAmt = (z > -8 && z < 26 && Math.abs(x) < 2.8) ? 1 - smoothstep(1.1, 2.8, Math.abs(x)) : 0;
+    const pathAmt = (z > -14 && z < 26 && Math.abs(x) < 2.8) ? 1 - smoothstep(1.1, 2.8, Math.abs(x)) : 0;
     tmp.copy(grass);
     if (pathAmt > 0.05) tmp.lerp(dirt, pathAmt);
     if (y < -0.6) tmp.lerp(new THREE.Color(0x6a5a40), 0.55);
@@ -68,12 +65,12 @@ export function createTerrain() {
   mesh.receiveShadow = true;
   mesh.castShadow = false;
 
-  const pathGeo = new THREE.PlaneGeometry(4.2, 28, 1, 8);
+  const pathGeo = new THREE.PlaneGeometry(4.2, 36, 1, 12);
   pathGeo.rotateX(-Math.PI * 0.5);
   const pathPos = pathGeo.attributes.position;
   for (let i = 0; i < pathPos.count; i++) {
     const x = pathPos.getX(i);
-    const z = pathPos.getZ(i) + 10;
+    const z = pathPos.getZ(i) + 4;
     pathPos.setY(i, sampleHeight(x, z) + 0.04);
   }
   pathGeo.computeVertexNormals();
@@ -85,10 +82,10 @@ export function createTerrain() {
       metalness: 0,
     }),
   );
-  path.position.set(0, 0, 10);
+  path.position.set(0, 0, 4);
   path.receiveShadow = true;
 
   const group = new THREE.Group();
   group.add(mesh, path);
-  return { group, mesh };
+  return { group, mesh, path };
 }

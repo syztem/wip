@@ -1,8 +1,16 @@
 import * as THREE from 'three/webgpu';
+import { RingGeometry } from 'three';
 import {
   float, mx_noise_float, Loop, color, positionLocal, sin, vec2, vec3,
   mul, time, uniform, Fn, transformNormalToView,
 } from 'three/tsl';
+import { KEEP_X, KEEP_Z, MOAT_INNER, MOAT_OUTER } from './layout.js';
+
+function ringGeo() {
+  const geometry = new RingGeometry(MOAT_INNER, MOAT_OUTER, 96, 8);
+  geometry.rotateX(-Math.PI * 0.5);
+  return geometry;
+}
 
 function stillWater() {
   const material = new THREE.MeshPhysicalMaterial({
@@ -15,10 +23,8 @@ function stillWater() {
     thickness: 0.55,
     ior: 1.333,
   });
-  const geometry = new THREE.PlaneGeometry(64, 64, 48, 48);
-  geometry.rotateX(-Math.PI * 0.5);
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, -1.08, -38);
+  const mesh = new THREE.Mesh(ringGeo(), material);
+  mesh.position.set(KEEP_X, -1.08, KEEP_Z);
   mesh.frustumCulled = false;
   mesh.renderOrder = 1;
   return { mesh };
@@ -37,7 +43,7 @@ export function createWater({ nodes = true } = {}) {
   const foamLow = uniform(-0.02);
   const foamHigh = uniform(0.045);
   const largeWavesFrequency = uniform(vec2(1.15, 0.72));
-  const largeWavesSpeed = uniform(0.419); // 2 cycles / 30s
+  const largeWavesSpeed = uniform(0.419);
   const largeWavesMultiplier = uniform(0.055);
   const smallWavesIterations = uniform(3);
   const smallWavesFrequency = uniform(1.6);
@@ -75,10 +81,10 @@ export function createWater({ nodes = true } = {}) {
   material.normalNode = transformNormalToView(toA.cross(toB));
   material.emissiveNode = foamColor.mul(elevation.remap(foamLow, foamHigh).clamp(0, 1).pow(3));
 
-  const geometry = new THREE.PlaneGeometry(64, 64, 128, 128);
+  const geometry = new RingGeometry(MOAT_INNER, MOAT_OUTER, 96, 24);
   geometry.rotateX(-Math.PI * 0.5);
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, -1.08, -38);
+  mesh.position.set(KEEP_X, -1.08, KEEP_Z);
   mesh.frustumCulled = false;
   mesh.renderOrder = 1;
   return { mesh };

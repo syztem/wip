@@ -1,6 +1,12 @@
 import * as THREE from 'three/webgpu';
 import { ConeGeometry } from 'three';
-import { stoneMap, roofMap, glassMap } from '../textures.js';
+import { stoneMap, roofMap } from '../textures.js';
+import { createRose } from './rose.js';
+import { createNave } from './nave.js';
+import {
+  KEEP_X, KEEP_Z, KEEP_W, KEEP_H, KEEP_D, WALL_T,
+  DOOR_W, DOOR_H, DOOR_Y0, ROSE_W, ROSE_H, ROSE_Y0, FRONT_Z,
+} from './layout.js';
 
 function box(mat, w, h, d, x, y, z, parent, shadows = true) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -24,7 +30,7 @@ function cone(mat, r, h, x, y, z, parent) {
 
 export function createCastle(env) {
   const root = new THREE.Group();
-  root.position.set(0, 0, -38);
+  root.position.set(KEEP_X, 0, KEEP_Z);
 
   const stone = new THREE.MeshStandardMaterial({
     map: stoneMap(),
@@ -33,8 +39,8 @@ export function createCastle(env) {
     color: 0xf3e6cc,
   });
   const stoneDark = new THREE.MeshStandardMaterial({
-    color: 0x6a5844,
-    roughness: 0.9,
+    color: 0x1c1612,
+    roughness: 0.94,
     metalness: 0,
   });
   const roof = new THREE.MeshStandardMaterial({
@@ -48,34 +54,46 @@ export function createCastle(env) {
     roughness: 0.28,
     metalness: 0.65,
   });
-  const glass = new THREE.MeshPhysicalMaterial({
-    map: glassMap(),
-    color: 0xffffff,
-    metalness: 0,
-    roughness: 0.08,
-    transmission: 0.82,
-    thickness: 0.35,
-    ior: 1.5,
-    transparent: true,
-    side: THREE.DoubleSide,
-    attenuationColor: new THREE.Color().setHex(0xc45a88, THREE.SRGBColorSpace),
-    attenuationDistance: 0.8,
-    envMap: env || null,
-    envMapIntensity: 1.1,
+  const wood = new THREE.MeshStandardMaterial({
+    color: 0x4a2c18,
+    roughness: 0.72,
+    metalness: 0.04,
   });
 
-  // keep
-  box(stone, 28, 16, 22, 0, 8, 0, root);
-  // plinth
-  box(stone, 32, 2.2, 26, 0, 1.1, 1.2, root);
-  // upper band
+  const zFront = FRONT_Z - WALL_T * 0.5;
+  const zBack = -FRONT_Z + WALL_T * 0.5;
+  const yMid = KEEP_H * 0.5;
+  const roseY1 = ROSE_Y0 + ROSE_H;
+  const doorY1 = DOOR_Y0 + DOOR_H;
+  const sideDoor = (KEEP_W - DOOR_W) * 0.5;
+  const sideRose = (KEEP_W - ROSE_W) * 0.5;
+
+  // Front wall around door + rose (hollow — no solid keep brick)
+  box(stone, sideDoor, DOOR_H, WALL_T, -KEEP_W * 0.5 + sideDoor * 0.5, DOOR_Y0 + DOOR_H * 0.5, zFront, root);
+  box(stone, sideDoor, DOOR_H, WALL_T, KEEP_W * 0.5 - sideDoor * 0.5, DOOR_Y0 + DOOR_H * 0.5, zFront, root);
+  box(stone, KEEP_W, ROSE_Y0 - doorY1, WALL_T, 0, doorY1 + (ROSE_Y0 - doorY1) * 0.5, zFront, root);
+  box(stone, sideRose, ROSE_H, WALL_T, -KEEP_W * 0.5 + sideRose * 0.5, ROSE_Y0 + ROSE_H * 0.5, zFront, root);
+  box(stone, sideRose, ROSE_H, WALL_T, KEEP_W * 0.5 - sideRose * 0.5, ROSE_Y0 + ROSE_H * 0.5, zFront, root);
+  const capH = KEEP_H - roseY1;
+  if (capH > 0.05) box(stone, KEEP_W, capH, WALL_T, 0, roseY1 + capH * 0.5, zFront, root);
+
+  box(stone, WALL_T, KEEP_H, KEEP_D, -KEEP_W * 0.5 + WALL_T * 0.5, yMid, 0, root);
+  box(stone, WALL_T, KEEP_H, KEEP_D, KEEP_W * 0.5 - WALL_T * 0.5, yMid, 0, root);
+  box(stone, KEEP_W, KEEP_H, WALL_T, 0, yMid, zBack, root);
+
+  box(stoneDark, KEEP_W - WALL_T * 2, 0.45, KEEP_D - WALL_T * 2, 0, 0.22, 0, root);
+  box(stoneDark, KEEP_W - WALL_T * 2, 0.4, KEEP_D - WALL_T * 2, 0, KEEP_H - 0.2, 0, root);
+
+  // plinth, gap at the door
+  const plinthSide = (32 - DOOR_W - 1.2) * 0.5;
+  box(stone, plinthSide, 2.2, 26, -16 + plinthSide * 0.5, 1.1, 1.2, root);
+  box(stone, plinthSide, 2.2, 26, 16 - plinthSide * 0.5, 1.1, 1.2, root);
+
   box(stone, 22, 8, 16, 0, 18, -1, root);
-  // center tower
   box(stone, 10, 18, 10, 0, 28, -1, root);
   cone(roof, 8.2, 9, 0, 41.5, -1, root);
   box(gold, 0.35, 2.4, 0.35, 0, 46.4, -1, root);
 
-  // corner towers
   const towers = [
     [-12.5, -9],
     [12.5, -9],
@@ -88,7 +106,6 @@ export function createCastle(env) {
     box(gold, 0.28, 1.6, 0.28, tx, 28.6, tz, root);
   }
 
-  // battlements
   for (let i = -13; i <= 13; i += 2.2) {
     box(stone, 1.3, 1.6, 1.3, i, 16.7, 11.2, root);
     box(stone, 1.3, 1.6, 1.3, i, 16.7, -11.2, root);
@@ -98,49 +115,33 @@ export function createCastle(env) {
     box(stone, 1.3, 1.6, 1.3, -14.2, 16.7, i, root);
   }
 
-  // door recess + door
-  box(stoneDark, 4.2, 5.2, 1.2, 0, 3.6, 11.6, root);
-  box(stone, 1.1, 5.4, 1.4, -2.4, 3.7, 11.7, root);
-  box(stone, 1.1, 5.4, 1.4, 2.4, 3.7, 11.7, root);
-  box(gold, 0.35, 0.35, 0.35, 0.7, 3.5, 12.2, root);
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(3.1, 4.5), stoneDark);
-  door.position.set(0, 3.35, 12.22);
-  root.add(door);
+  box(stone, 1.15, DOOR_H + 0.3, 1.5, -DOOR_W * 0.5 - 0.55, DOOR_Y0 + DOOR_H * 0.5, FRONT_Z + 0.15, root);
+  box(stone, 1.15, DOOR_H + 0.3, 1.5, DOOR_W * 0.5 + 0.55, DOOR_Y0 + DOOR_H * 0.5, FRONT_Z + 0.15, root);
 
-  // steps
+  const leafL = new THREE.Mesh(new THREE.BoxGeometry(1.45, DOOR_H * 0.96, 0.14), wood);
+  leafL.position.set(-DOOR_W * 0.5 + 0.1, DOOR_Y0 + DOOR_H * 0.5, FRONT_Z - 0.2);
+  leafL.rotation.y = 1.15;
+  leafL.castShadow = true;
+  root.add(leafL);
+  const leafR = leafL.clone();
+  leafR.position.set(DOOR_W * 0.5 - 0.1, DOOR_Y0 + DOOR_H * 0.5, FRONT_Z - 0.2);
+  leafR.rotation.y = -1.15;
+  root.add(leafR);
+
   for (let s = 0; s < 6; s++) {
     box(stone, 8 - s * 0.35, 0.38, 1.15, 0, 0.25 + s * 0.38, 14.2 + s * 0.55, root);
   }
 
-  // stained glass (front) — dark well behind so transmission reads
-  box(stoneDark, 5.4, 7.6, 0.4, 0, 12.6, 10.85, root, false);
-  const pane = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 7.4), glass);
-  pane.position.set(0, 12.6, 11.25);
-  pane.castShadow = false;
-  pane.receiveShadow = false;
-  root.add(pane);
+  const rose = createRose(env);
+  rose.mesh.position.set(0, ROSE_Y0, zFront);
+  root.add(rose.mesh);
 
-  // windows
-  for (const [wx, wy, wz] of [
-    [-8, 10, 11.15],
-    [8, 10, 11.15],
-    [-8, 10, -11.15],
-    [8, 10, -11.15],
-    [0, 24, 4.1],
-  ]) {
-    const insetZ = wz > 0 ? wz - 0.22 : wz + 0.22;
-    box(stoneDark, 2.05, 2.85, 0.35, wx, wy, insetZ, root, false);
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.6), glass);
-    w.position.set(wx, wy, wz);
-    if (wz < 0) w.rotation.y = Math.PI;
-    root.add(w);
-  }
-
-  // side wings
   box(stone, 10, 10, 12, -19, 6, 0, root);
   box(stone, 10, 10, 12, 19, 6, 0, root);
   cone(roof, 6.4, 5, -19, 13.6, 0, root);
   cone(roof, 6.4, 5, 19, 13.6, 0, root);
 
-  return { group: root, glass };
+  const nave = createNave(root);
+
+  return { group: root, glass: rose.material, nave };
 }

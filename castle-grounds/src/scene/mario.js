@@ -1,5 +1,8 @@
 import * as THREE from 'three/webgpu';
+import { CapsuleGeometry, CircleGeometry, TorusGeometry } from 'three';
 import { sampleHeight } from './terrain.js';
+import { wrap, wave, LOOP } from '../hour.js';
+import { KEEP_Z, FRONT_Z } from './layout.js';
 
 function mat(hex, { rough = 0.55, metal = 0 } = {}) {
   return new THREE.MeshStandardMaterial({
@@ -9,12 +12,46 @@ function mat(hex, { rough = 0.55, metal = 0 } = {}) {
   });
 }
 
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function lerpAngle(a, b, t) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
+}
+
+/** Piecewise path. Keys at t=0 and t=30 match. */
+const KEYS = [
+  { t: 0, z: 16.0, yaw: Math.PI },
+  { t: 8, z: -10.0, yaw: Math.PI },
+  { t: 12, z: KEEP_Z + FRONT_Z + 1.35, yaw: Math.PI },
+  { t: 15, z: KEEP_Z + FRONT_Z + 1.35, yaw: Math.PI },
+  { t: 17, z: KEEP_Z + FRONT_Z + 1.35, yaw: 0 },
+  { t: 24, z: -10.0, yaw: 0 },
+  { t: 28, z: 16.0, yaw: 0 },
+  { t: 30, z: 16.0, yaw: Math.PI },
+];
+
+function samplePath(t) {
+  const u = wrap(t);
+  let i = 0;
+  while (i < KEYS.length - 2 && KEYS[i + 1].t < u) i++;
+  const a = KEYS[i];
+  const b = KEYS[i + 1];
+  const f = (u - a.t) / Math.max(1e-6, b.t - a.t);
+  const s = f * f * (3 - 2 * f);
+  return {
+    z: lerp(a.z, b.z, s),
+    yaw: lerpAngle(a.yaw, b.yaw, s),
+    moving: Math.abs(b.z - a.z) > 0.4,
+  };
+}
+
 export function createMario() {
   const root = new THREE.Group();
-  const x = 0;
-  const z = 21.2;
-  const y = sampleHeight(x, z);
-  root.position.set(x, y, z);
   root.rotation.y = Math.PI;
 
   const red = mat(0xe01818, { rough: 0.42 });
@@ -31,12 +68,12 @@ export function createMario() {
   hip.castShadow = true;
   root.add(hip);
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.32, 6, 12), blue);
+  const torso = new THREE.Mesh(new CapsuleGeometry(0.28, 0.32, 6, 12), blue);
   torso.position.y = 0.98;
   torso.castShadow = true;
   root.add(torso);
 
-  const shirt = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.12, 4, 10), red);
+  const shirt = new THREE.Mesh(new CapsuleGeometry(0.26, 0.12, 4, 10), red);
   shirt.position.y = 1.22;
   shirt.castShadow = true;
   root.add(shirt);
@@ -62,10 +99,10 @@ export function createMario() {
   brim.scale.set(1, 1, 0.72);
   brim.castShadow = true;
   root.add(brim);
-  const emblem = new THREE.Mesh(new THREE.CircleGeometry(0.07, 12), white);
+  const emblem = new THREE.Mesh(new CircleGeometry(0.07, 12), white);
   emblem.position.set(0, 1.82, 0.22);
   root.add(emblem);
-  const letter = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.008, 6, 10), red);
+  const letter = new THREE.Mesh(new TorusGeometry(0.028, 0.008, 6, 10), red);
   letter.position.set(0, 1.82, 0.225);
   root.add(letter);
 
@@ -85,7 +122,7 @@ export function createMario() {
     pupil.position.set(s * 0.09, 1.62, 0.3);
     root.add(pupil);
 
-    const stache = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.1, 3, 6), brown);
+    const stache = new THREE.Mesh(new CapsuleGeometry(0.035, 0.1, 3, 6), brown);
     stache.position.set(s * 0.07, 1.48, 0.25);
     stache.rotation.z = s * 0.7;
     root.add(stache);
@@ -94,7 +131,7 @@ export function createMario() {
     ear.position.set(s * 0.27, 1.56, 0);
     root.add(ear);
 
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.28, 4, 8), red);
+    const arm = new THREE.Mesh(new CapsuleGeometry(0.08, 0.28, 4, 8), red);
     arm.position.set(s * 0.38, 1.08, 0.02);
     arm.rotation.z = s * 0.35;
     arm.castShadow = true;
@@ -104,7 +141,7 @@ export function createMario() {
     hand.castShadow = true;
     root.add(hand);
 
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.28, 4, 8), blue);
+    const leg = new THREE.Mesh(new CapsuleGeometry(0.1, 0.28, 4, 8), blue);
     leg.position.set(s * 0.13, 0.38, 0);
     leg.castShadow = true;
     root.add(leg);
@@ -118,13 +155,19 @@ export function createMario() {
   nose.position.set(0, 1.54, 0.28);
   root.add(nose);
 
-  const baseY = y;
   return {
     group: root,
-    update(t) {
-      const u = ((t % 30) + 30) % 30;
-      root.position.y = baseY + 0.028 * Math.sin((u / 2) * Math.PI * 2);
-      root.rotation.y = Math.PI + 0.06 * Math.sin((u / 30) * Math.PI * 2);
+    update(t, bridge) {
+      const pose = samplePath(t);
+      const x = 0;
+      const z = pose.z;
+      let y = sampleHeight(x, z);
+      if (bridge && z <= bridge.z1 && z >= bridge.z0) y = bridge.deckY;
+      const bob = pose.moving ? 0.04 * wave(t, 16) : 0.02 * wave(t, 2);
+      root.position.set(x, y + bob, z);
+      root.rotation.y = pose.yaw;
     },
   };
 }
+
+export { LOOP };

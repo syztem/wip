@@ -1,10 +1,10 @@
 import * as THREE from 'three/webgpu';
 import { sampleHeight } from './terrain.js';
+import { wave } from '../hour.js';
 
 export function createProps() {
   const root = new THREE.Group();
 
-  // waterfall — right of keep
   const waterMat = new THREE.MeshStandardMaterial({
     color: 0xa8e4ff,
     roughness: 0.15,
@@ -27,7 +27,6 @@ export function createProps() {
   foam.scale.set(1.4, 0.45, 1.2);
   root.add(foam);
 
-  // flags — loop-safe spin via sin
   const flagMat = new THREE.MeshStandardMaterial({
     color: 0xd02020,
     roughness: 0.5,
@@ -48,7 +47,6 @@ export function createProps() {
     flags.push(flag);
   }
 
-  // flowers — N64-round, remaster materials
   const petalColors = [0xe02020, 0xf0d040, 0x3a6adf, 0xf4f4f4];
   const stemM = new THREE.MeshStandardMaterial({ color: 0x2f7a28, roughness: 0.8 });
   const rng = (i) => {
@@ -81,10 +79,10 @@ export function createProps() {
   return {
     group: root,
     update(t) {
-      const s = Math.sin((t / 30) * Math.PI * 2);
+      const s = wave(t, 1);
       for (const f of flags) f.rotation.y = 0.35 * s;
-      waterMat.emissiveIntensity = 0.28 + 0.12 * (0.5 + 0.5 * Math.sin(t * 2.1));
-      sheet.position.y = 7 + 0.08 * Math.sin(t * 1.7);
+      waterMat.emissiveIntensity = 0.28 + 0.12 * (0.5 + 0.5 * wave(t, 2));
+      sheet.position.y = 7 + 0.08 * wave(t, 1);
     },
   };
 }
