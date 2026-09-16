@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { CanvasTexture } from 'three';
 
 function canvas(size = 256) {
   const c = document.createElement('canvas');
@@ -7,7 +8,7 @@ function canvas(size = 256) {
 }
 
 function toMap(c, repeatX, repeatY, srgb = true) {
-  const t = new THREE.CanvasTexture(c);
+  const t = new CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeatX, repeatY);
   t.anisotropy = 4;

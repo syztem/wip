@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { ConeGeometry } from 'three';
 import { stoneMap, roofMap, glassMap } from '../textures.js';
 
 function box(mat, w, h, d, x, y, z, parent, shadows = true) {
@@ -13,7 +14,7 @@ function box(mat, w, h, d, x, y, z, parent, shadows = true) {
 }
 
 function cone(mat, r, h, x, y, z, parent) {
-  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 8), mat);
+  const m = new THREE.Mesh(new ConeGeometry(r, h, 8), mat);
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;

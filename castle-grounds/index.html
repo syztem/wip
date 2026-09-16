@@ -5,7 +5,7 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "./vendor/three/build/three.webgpu.js",
+      "three": "./vendor/three/build/three.core.js",
       "three/webgpu": "./vendor/three/build/three.webgpu.js",
       "three/tsl": "./vendor/three/build/three.tsl.js",
       "three/addons/": "./vendor/three/examples/jsm/"
@@ -81,13 +81,30 @@
       if (p.slice(-1) !== '/' && !/\.[a-zA-Z0-9]+$/.test(p)) {
         location.replace(p + '/' + location.search + location.hash);
       }
+      function die(msg) {
+        document.body.classList.add('dead');
+        var err = document.getElementById('err');
+        if (err) { err.style.display = 'grid'; err.textContent = msg; }
+      }
+      if (!HTMLScriptElement.supports || !HTMLScriptElement.supports('importmap')) {
+        die('Need a current Firefox, Chrome, Edge, or Safari (import maps).');
+        return;
+      }
+      window.addEventListener('error', function (e) {
+        if (document.body.classList.contains('live') || document.body.classList.contains('dead')) return;
+        die((e && e.message) ? e.message : 'script error');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        if (document.body.classList.contains('live') || document.body.classList.contains('dead')) return;
+        var r = e && e.reason;
+        die((r && r.message) ? r.message : String(r || 'boot failed'));
+      });
+      setTimeout(function () {
+        if (!document.body.classList.contains('live') && !document.body.classList.contains('dead')) {
+          die('Boot stalled. Hard-refresh. If it persists, the renderer never finished.');
+        }
+      }, 15000);
     })();
-    if (!HTMLScriptElement.supports || !HTMLScriptElement.supports('importmap')) {
-      var err = document.getElementById('err');
-      document.body.classList.add('dead');
-      err.style.display = 'grid';
-      err.textContent = 'Need a current Firefox, Chrome, Edge, or Safari (import maps).';
-    }
   </script>
   <script type="module" src="./src/main.js"></script>
 </body>

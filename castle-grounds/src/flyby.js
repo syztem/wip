@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { CatmullRomCurve3 } from 'three';
 
 export const LOOP = 30;
 
@@ -36,8 +37,8 @@ export function createFlyby(camera) {
     new THREE.Vector3(0.0, 9.0, -28.0),
   ];
 
-  const posCurve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.14);
-  const lookCurve = new THREE.CatmullRomCurve3(looks, true, 'catmullrom', 0.14);
+  const posCurve = new CatmullRomCurve3(pts, true, 'catmullrom', 0.14);
+  const lookCurve = new CatmullRomCurve3(looks, true, 'catmullrom', 0.14);
   const p = new THREE.Vector3();
   const l = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);

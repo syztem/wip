@@ -1,205 +1,197 @@
 import * as THREE from 'three/webgpu';
+import { FogExp2, Clock } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { createPost } from './post.js';
-import { createFlyby, LOOP } from './flyby.js';
-import { createSky } from './scene/sky.js';
+import { createFlyby } from './flyby.js';
 import { createTerrain } from './scene/terrain.js';
 import { createCastle } from './scene/castle.js';
-import { createBridge } from './scene/bridge.js';
+import { createSky } from './scene/sky.js';
 import { createWater } from './scene/water.js';
 import { createTrees } from './scene/trees.js';
-import { createMario } from './scene/mario.js';
 import { createProps } from './scene/props.js';
-
-const orbitMode = /(?:\?|&)orbit=1(?:&|$)/.test(location.search);
-const debug = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
-const forceGLQuery = /(?:\?|&)webgl=1(?:&|$)/.test(location.search);
-const wantBloom = /(?:\?|&)bloom=1(?:&|$)/.test(location.search);
-const errEl = document.getElementById('err');
-const fpsEl = document.getElementById('fps');
+import { createMario } from './scene/mario.js';
+import { createPost } from './post.js';
 
 const CLEAR = 0x7eb7e8;
+const debug = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
+const orbit = /(?:\?|&)orbit=1(?:&|$)/.test(location.search);
+const forceGLQuery = /(?:\?|&)webgl=1(?:&|$)/.test(location.search);
+const wantGPUQuery = /(?:\?|&)webgpu=1(?:&|$)/.test(location.search);
+const bloomQuery = /(?:\?|&)bloom=1(?:&|$)/.test(location.search);
+const errEl = document.getElementById('err');
+const fpsEl = document.getElementById('fps');
 
 function fail(msg, err) {
   console.error(msg, err);
   document.body.classList.add('dead');
+  document.body.classList.remove('live');
   if (errEl) {
     errEl.style.display = 'grid';
     errEl.textContent = msg;
   }
 }
 
-function asset(relFromThisModule) {
-  return new URL(relFromThisModule, import.meta.url).href;
+function asset(path) {
+  return new URL(path, import.meta.url).href;
 }
 
-async function loadEnv() {
-  const url = asset('../public/hdr/env.hdr');
-  const load = async (type) => {
-    const loader = new HDRLoader();
-    if (type) loader.type = type;
-    const tex = await loader.loadAsync(url);
-    tex.mapping = THREE.EquirectangularReflectionMapping;
-    return tex;
-  };
-  try {
-    return await load();
-  } catch (e) {
-    console.warn('HDR half-float miss, FloatType', e);
-    return await load(THREE.FloatType);
-  }
+function uaFlags() {
+  const ua = navigator.userAgent;
+  const firefox = /\bFirefox\b/.test(ua);
+  const safari = /\bSafari\b/.test(ua) && !/\b(?:Chrome|Chromium|CriOS|Edg|OPR|Firefox)\b/.test(ua);
+  return { safari, firefox };
+}
+
+function withTimeout(promise, ms, label) {
+  let id;
+  const timeout = new Promise((_, reject) => {
+    id = setTimeout(() => reject(new Error(`${label} timeout (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
 }
 
 function applyRenderer(renderer, webgl) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, webgl ? 1.25 : 1.75));
   renderer.setSize(innerWidth, innerHeight);
+  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(CLEAR, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.95;
+  renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
-  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(CLEAR, 1);
+  renderer.domElement.style.background = '#7eb7e8';
   document.body.appendChild(renderer.domElement);
 }
 
 async function bootRenderer() {
   const common = { antialias: true, powerPreference: 'high-performance' };
+  const { safari, firefox } = uaFlags();
+  // Safari/Firefox: WebGPU init hangs or presents black. Chrome still tries GPU.
   const wantGL = forceGLQuery
-    || (typeof navigator.gpu === 'undefined' && /\bFirefox\b/.test(navigator.userAgent));
+    || (!wantGPUQuery && (safari || firefox || typeof navigator.gpu === 'undefined'));
 
   const make = async (forceWebGL) => {
     const renderer = new THREE.WebGPURenderer({ ...common, forceWebGL });
+    await withTimeout(
+      renderer.init(),
+      forceWebGL ? 6000 : 2000,
+      forceWebGL ? 'WebGL2 init' : 'WebGPU init',
+    );
     applyRenderer(renderer, forceWebGL);
-    await renderer.init();
     return renderer;
   };
 
   try {
     return { renderer: await make(wantGL), webgl: wantGL };
   } catch (e) {
-    console.warn('WebGPU init failed, WebGL2 backend', e);
+    console.warn('renderer init failed, WebGL2', e);
     document.querySelectorAll('canvas').forEach((c) => c.remove());
     return { renderer: await make(true), webgl: true };
   }
 }
 
 async function main() {
-  let renderer;
-  let webgl = false;
-  try {
-    ({ renderer, webgl } = await bootRenderer());
-  } catch (e) {
-    fail('Need WebGL2 (current Firefox / Chrome / Edge / Safari).', e);
-    return;
-  }
+  const { renderer, webgl } = await bootRenderer();
+  if (debug) console.info('boot', { webgl, gpu: !!navigator.gpu, ua: navigator.userAgent });
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(CLEAR);
-  scene.fog = new THREE.FogExp2(CLEAR, 0.0038);
+  scene.fog = new FogExp2(CLEAR, 0.0038);
 
-  const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.15, 2000000);
-  camera.position.set(0.2, 1.72, 24.8);
+  const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.15, 2000000);
   scene.add(camera);
 
-  const sky = createSky({ useMesh: !webgl });
-  if (sky.mesh) scene.add(sky.mesh);
-
-  let env = null;
   try {
-    env = await loadEnv();
+    const env = await new HDRLoader().loadAsync(asset('../public/hdr/env.hdr'));
+    env.mapping = THREE.EquirectangularReflectionMapping;
     scene.environment = env;
     scene.environmentIntensity = 0.55;
   } catch (e) {
     console.warn('HDR miss', e);
   }
 
-  const hemi = new THREE.HemisphereLight(0xc5e2ff, 0x4a5a30, 0.72);
+  const hemi = new THREE.HemisphereLight(0xc8dff5, 0x3a5a28, 0.55);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff1d0, 2.15);
-  sun.position.copy(sky.sunDir).multiplyScalar(90);
+  const sun = new THREE.DirectionalLight(0xfff1d0, 2.35);
+  sun.position.set(28, 42, 18);
   sun.castShadow = true;
-  const shadowRes = webgl ? 1024 : 2048;
-  sun.shadow.mapSize.set(shadowRes, shadowRes);
-  sun.shadow.camera.near = 10;
-  sun.shadow.camera.far = 180;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 120;
   sun.shadow.camera.left = -50;
   sun.shadow.camera.right = 50;
   sun.shadow.camera.top = 50;
   sun.shadow.camera.bottom = -50;
-  sun.shadow.bias = -0.0003;
-  sun.shadow.normalBias = 0.04;
+  sun.shadow.bias = -0.0004;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xb7d4ff, 0.38);
-  fill.position.set(-45, 28, 55);
-  scene.add(fill);
 
-  scene.add(createTerrain().group);
-  scene.add(createCastle(env).group);
-  scene.add(createBridge().group);
+  const sky = createSky({ useMesh: !webgl });
+  scene.add(sky.mesh);
+  sun.position.copy(sky.sunDir).multiplyScalar(60);
 
-  let water;
-  try {
-    water = createWater({ nodes: !webgl });
-    scene.add(water.mesh);
-    if (env && water.mesh.material) water.mesh.material.envMapIntensity = 1.15;
-  } catch (e) {
-    console.warn('water miss', e);
-  }
+  const terrain = createTerrain();
+  scene.add(terrain.mesh);
+  if (terrain.path) scene.add(terrain.path);
+
+  const castle = createCastle(scene.environment);
+  scene.add(castle.group);
+
+  const water = createWater({ nodes: !webgl });
+  scene.add(water.mesh);
 
   const trees = createTrees();
   scene.add(trees.group);
 
-  const mario = createMario();
-  scene.add(mario.group);
-
   const props = createProps();
   scene.add(props.group);
 
+  const mario = createMario();
+  scene.add(mario.group);
+
   const flyby = createFlyby(camera);
+  flyby.apply(0);
+
   let controls = null;
-  if (orbitMode) {
+  if (orbit) {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, 8, -20);
-    controls.maxDistance = 120;
+    controls.target.set(0, 8, -36);
   }
 
   const post = createPost(renderer, scene, camera, {
-    bloomEnabled: wantBloom && !webgl,
+    bloomEnabled: bloomQuery && !webgl,
   });
 
-  const clock = new THREE.Timer();
-  clock.connect(document);
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  const clock = new Clock();
   let frames = 0;
   let fpsT = 0;
   let shown = false;
 
   renderer.setAnimationLoop(() => {
     try {
-      clock.update();
-      const t = clock.getElapsed();
       const dt = clock.getDelta();
-
-      if (!orbitMode) flyby.apply(t);
+      const t = clock.getElapsedTime();
+      if (!orbit) flyby.apply(t);
       else controls.update();
-
       mario.update(t);
       trees.update(t);
       props.update(t);
-
       post.render();
-
       if (!shown) {
         shown = true;
         document.body.classList.add('live');
       }
-
       if (debug && fpsEl) {
         frames++;
         fpsT += dt;
         if (fpsT >= 0.5) {
-          fpsEl.textContent = `${Math.round(frames / fpsT)}`;
+          fpsEl.textContent = `${Math.round(frames / fpsT)} fps · ${webgl ? 'webgl2' : 'webgpu'}${post.enabled ? ' · bloom' : ''}`;
           frames = 0;
           fpsT = 0;
         }
@@ -209,16 +201,6 @@ async function main() {
       fail('render failed', e);
     }
   });
-
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
-
-  if (debug) {
-    console.info('castle-grounds loop', LOOP, 's', post.enabled ? 'bloom' : 'no-bloom', webgl ? 'webgl2' : 'webgpu');
-  }
 }
 
 main().catch((e) => fail('boot failed', e));
