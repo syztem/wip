@@ -230,77 +230,103 @@ export function createPlumber(kind = 'mario') {
   root.scale.setScalar(scale);
 
   const poseState = { x: isLuigi ? 1.6 : 0, z: 16.2, yaw: Math.PI, moving: false, gesture: 'idle' };
+  const rig = {
+    aLx: 0, aLy: 0, aLz: isLuigi ? -0.16 : -0.1,
+    aRx: 0, aRy: 0, aRz: isLuigi ? 0.16 : 0.1,
+    lLx: 0, lRx: 0, headX: 0, headY: 0, bodyX: 0, bodyZ: 0,
+  };
+
+  function damp(cur, tgt, k) {
+    return cur + (tgt - cur) * k;
+  }
 
   function applyGesture(name, t, moving) {
-    const walk = moving ? Math.sin(t * 9.2) : Math.sin(t * 2.1) * 0.12;
-    const idle = Math.sin(t * (isLuigi ? 2.6 : 2.0));
     const g = name || (moving ? 'walk' : 'idle');
+    const special = g !== 'idle' && g !== 'walk';
+    const stride = (!special && moving) ? Math.sin(t * 8.4) : Math.sin(t * 1.8) * 0.08;
+    const idle = Math.sin(t * (isLuigi ? 2.4 : 1.9));
 
-    let aLx = moving ? walk * 0.55 : idle * 0.08;
-    let aRx = moving ? -walk * 0.55 : -idle * 0.08;
-    let aLz = isLuigi ? -0.18 : -0.12;
-    let aRz = isLuigi ? 0.18 : 0.12;
+    let aLx = special ? 0 : stride * 0.48;
+    let aRx = special ? 0 : -stride * 0.48;
+    let aLz = isLuigi ? -0.16 : -0.1;
+    let aRz = isLuigi ? 0.16 : 0.1;
     let aLy = 0;
     let aRy = 0;
-    let lLx = moving ? -walk * 0.7 : 0;
-    let lRx = moving ? walk * 0.7 : 0;
-    let headX = 0;
+    let lLx = (!special && moving) ? -stride * 0.62 : idle * 0.03;
+    let lRx = (!special && moving) ? stride * 0.62 : -idle * 0.03;
+    let headX = idle * 0.03;
     let headY = 0;
     let stacheKick = 0;
+    let bodyX = moving && !special ? Math.sin(t * 8.4) * 0.025 : idle * 0.012;
+    let bodyZ = moving && !special ? -stride * 0.025 : 0;
 
     if (g === 'wave') {
-      aRx = -0.15;
-      aRz = 1.55;
-      aRy = Math.sin(t * 7) * 0.45;
+      aRx = -0.2;
+      aRz = 1.35;
+      aRy = Math.sin(t * 6.2) * 0.38;
+      aLx = idle * 0.08;
     } else if (g === 'point') {
-      aRx = -1.25;
-      aRz = 0.15;
-      aRy = 0.35;
-      headY = 0.18;
-      headX = -0.12;
+      aRx = -1.05;
+      aRz = 0.12;
+      aRy = 0.22;
+      headY = 0.14;
+      headX = -0.1;
+      aLx = 0.12;
     } else if (g === 'shrug') {
-      aLz = -1.05;
-      aRz = 1.05;
-      aLx = -0.35;
-      aRx = -0.35;
-      headX = 0.08;
-    } else if (g === 'measure') {
-      aLx = -0.85;
-      aLy = 0.4;
-      aLz = -0.35;
-      aRx = -0.55;
-      headX = 0.2;
-      tape.rotation.z = Math.sin(t * 3) * 0.12;
-    } else if (g === 'cheer') {
-      aLx = -2.4;
-      aRx = -2.4;
-      aLz = -0.25;
-      aRz = 0.25;
-      headX = -0.15;
-      stacheKick = 0.08;
-    } else if (g === 'shiver') {
-      aLx = 0.35 + Math.sin(t * 18) * 0.12;
-      aRx = 0.35 + Math.sin(t * 18 + 1) * 0.12;
-      headY = Math.sin(t * 14) * 0.08;
-    } else if (g === 'present') {
-      aRx = -0.7;
+      aLz = -0.85;
       aRz = 0.85;
-      aRy = 0.2;
-      headY = -0.12;
+      aLx = -0.28;
+      aRx = -0.28;
+      headX = 0.06;
+    } else if (g === 'measure') {
+      aLx = -0.7;
+      aLy = 0.28;
+      aLz = -0.28;
+      aRx = -0.42;
+      headX = 0.14;
+      tape.rotation.z = Math.sin(t * 2.4) * 0.1;
+    } else if (g === 'cheer') {
+      aLx = -1.75;
+      aRx = -1.75;
+      aLz = -0.18;
+      aRz = 0.18;
+      headX = -0.1;
+      stacheKick = 0.06;
+    } else if (g === 'shiver') {
+      aLx = 0.28 + Math.sin(t * 14) * 0.08;
+      aRx = 0.28 + Math.sin(t * 14 + 1.2) * 0.08;
+      headY = Math.sin(t * 11) * 0.05;
+      bodyZ = Math.sin(t * 14) * 0.02;
+    } else if (g === 'present') {
+      aRx = -0.55;
+      aRz = 0.72;
+      aRy = 0.12;
+      headY = -0.08;
+      aLx = 0.1;
     }
 
-    armL.rotation.set(aLx, aLy, aLz);
-    armR.rotation.set(aRx, aRy, aRz);
-    legL.rotation.x = lLx;
-    legR.rotation.x = lRx;
-    headG.rotation.set(headX, headY, 0);
+    const k = 0.18;
+    rig.aLx = damp(rig.aLx, aLx, k);
+    rig.aLy = damp(rig.aLy, aLy, k);
+    rig.aLz = damp(rig.aLz, aLz, k);
+    rig.aRx = damp(rig.aRx, aRx, k);
+    rig.aRy = damp(rig.aRy, aRy, k);
+    rig.aRz = damp(rig.aRz, aRz, k);
+    rig.lLx = damp(rig.lLx, lLx, k);
+    rig.lRx = damp(rig.lRx, lRx, k);
+    rig.headX = damp(rig.headX, headX, k);
+    rig.headY = damp(rig.headY, headY, k);
+    rig.bodyX = damp(rig.bodyX, bodyX, k);
+    rig.bodyZ = damp(rig.bodyZ, bodyZ, k);
+
+    armL.rotation.set(rig.aLx, rig.aLy, rig.aLz);
+    armR.rotation.set(rig.aRx, rig.aRy, rig.aRz);
+    legL.rotation.x = rig.lLx;
+    legR.rotation.x = rig.lRx;
+    headG.rotation.set(rig.headX, rig.headY, 0);
     stacheG.rotation.z = stacheKick * Math.sin(t * 6);
-    body.rotation.x = moving ? Math.sin(t * 9.2) * 0.03 : idle * 0.015;
-    body.rotation.z = moving ? -walk * 0.03 : 0;
-
-    for (const iris of irises) {
-      iris.position.x = (iris.position.x < 0 ? -0.09 : 0.09) + headY * 0.04;
-    }
+    body.rotation.x = rig.bodyX;
+    body.rotation.z = rig.bodyZ;
 
     wrench.visible = !isLuigi && (g === 'present' || g === 'idle' || g === 'wave' || g === 'cheer');
     tape.visible = isLuigi && !lantern.visible && (g === 'measure' || g === 'idle' || g === 'shrug');

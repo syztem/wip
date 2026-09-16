@@ -100,6 +100,37 @@ export function leafMap() {
   return toMap(c, 3, 3);
 }
 
+
+export function checkerMap() {
+  const [c, ctx] = canvas(256);
+  const n = 8;
+  const s = 256 / n;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      ctx.fillStyle = ((x + y) % 2 === 0) ? '#f4efe4' : '#1a1a1c';
+      ctx.fillRect(x * s, y * s, s + 0.5, s + 0.5);
+    }
+  }
+  return toMap(c, 6, 5);
+}
+
+export function muralMap() {
+  const [c, ctx] = canvas(256);
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#6eb7ef');
+  g.addColorStop(0.55, '#9fd2f5');
+  g.addColorStop(1, '#d7ecfa');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  for (const [x, y, rx, ry] of [[40, 70, 36, 18], [80, 62, 28, 16], [130, 80, 40, 20], [190, 68, 34, 17], [50, 150, 30, 16], [160, 140, 38, 18]]) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return toMap(c, 2, 1);
+}
+
 /** Original arched window — crown + gown silhouette, not a ripped sprite. */
 export function glassMap() {
   const [c, ctx] = canvas(256);

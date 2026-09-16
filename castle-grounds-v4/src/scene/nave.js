@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { Sprite } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { ROSE_Y0, ROSE_H, WALL_T, FRONT_Z, KEEP_W, KEEP_D, KEEP_H } from './layout.js';
+import { checkerMap, muralMap } from '../textures.js';
 
 function makeMotes() {
   const group = new THREE.Group();
@@ -93,16 +94,43 @@ function dressInterior(parent) {
 
   const tile = new THREE.Mesh(
     new THREE.BoxGeometry(KEEP_W - 3.2, 0.08, KEEP_D - 3.2),
-    floor,
+    new THREE.MeshStandardMaterial({
+      map: checkerMap(),
+      roughness: 0.55,
+      metalness: 0.04,
+    }),
   );
   tile.position.set(0, 0.48, 0);
   tile.receiveShadow = true;
   parent.add(tile);
 
-  const runner = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.04, KEEP_D - 5), rug);
-  runner.position.set(0, 0.54, 0.4);
+  const sun = new THREE.Mesh(
+    new THREE.CircleGeometry(2.4, 24),
+    new THREE.MeshStandardMaterial({ color: 0xf0c14a, roughness: 0.4, metalness: 0.15, emissive: 0x664400, emissiveIntensity: 0.12 }),
+  );
+  sun.rotation.x = -Math.PI * 0.5;
+  sun.position.set(0, 0.53, 1.2);
+  parent.add(sun);
+
+  const runner = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.03, 7.5), rug);
+  runner.position.set(0, 0.54, 5.2);
   runner.receiveShadow = true;
   parent.add(runner);
+
+  const mural = new THREE.MeshStandardMaterial({
+    map: muralMap(),
+    roughness: 0.82,
+    metalness: 0,
+  });
+  const backWall = new THREE.Mesh(new THREE.PlaneGeometry(KEEP_W - 3.6, 10.5), mural);
+  backWall.position.set(0, 6.2, -KEEP_D * 0.5 + WALL_T + 0.08);
+  parent.add(backWall);
+  for (const s of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(KEEP_D - 4.2, 10.5), mural);
+    side.position.set(s * (KEEP_W * 0.5 - WALL_T - 0.08), 6.2, 0);
+    side.rotation.y = s * -Math.PI * 0.5;
+    parent.add(side);
+  }
 
   const cols = [
     [-7.4, -6.2],

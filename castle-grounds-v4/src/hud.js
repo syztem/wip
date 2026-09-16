@@ -12,25 +12,15 @@ export function createHud() {
         <span class="mark">PP</span>
         <span class="prod">PROPERTY PLUMBERS</span>
       </div>
-      <div class="listing" data-listing>1 KEEP · 4 SPIRES · MOAT INCL.</div>
       <div class="clock">
         <span data-clock>00:00</span>
         <span class="sep">·</span>
         <span data-weather>CLEAR</span>
       </div>
     </div>
-    <div class="nametag mario" data-tag-mario>
-      <b>MARIO</b>
-      <span>Demo &amp; Design</span>
-    </div>
-    <div class="nametag luigi" data-tag-luigi>
-      <b>LUIGI</b>
-      <span>Structure &amp; Panic</span>
-    </div>
-    <div class="stamp" data-stamp>NEW LISTING</div>
     <div class="card">
-      <div class="kicker"><span data-n>00</span> · <span data-kicker>HGTV ADJACENT</span></div>
-      <div class="title" data-title>PROPERTY PLUMBERS</div>
+      <div class="kicker"><span data-n>00</span> · <span data-kicker>SEASON PREMIERE</span></div>
+      <div class="title" data-title>THE LISTING PHOTO</div>
       <div class="line" data-line></div>
     </div>
     <div class="chrome bot">
@@ -50,9 +40,6 @@ export function createHud() {
     ticker: root.querySelector('[data-ticker]'),
     bar: root.querySelector('[data-bar]'),
     card: root.querySelector('.card'),
-    stamp: root.querySelector('[data-stamp]'),
-    tagM: root.querySelector('[data-tag-mario]'),
-    tagL: root.querySelector('[data-tag-luigi]'),
   };
 
   let lastId = '';
@@ -67,16 +54,6 @@ export function createHud() {
     el.kicker.textContent = c.kicker;
     el.title.textContent = c.title;
     el.line.textContent = c.line;
-    el.stamp.textContent = c.tag || '';
-    el.stamp.classList.remove('pop');
-    void el.stamp.offsetWidth;
-    el.stamp.classList.add('pop');
-    el.stamp.classList.toggle('sold', c.tag === 'SOLD');
-
-    const feat = c.featured || 'both';
-    el.tagM.classList.toggle('on', feat === 'mario' || feat === 'both');
-    el.tagL.classList.toggle('on', feat === 'luigi' || feat === 'both');
-
     el.card.classList.remove('in');
     void el.card.offsetWidth;
     el.card.classList.add('in');
@@ -99,7 +76,7 @@ export function createHud() {
       }
       cardAt += dt;
       el.card.classList.add('hold');
-      el.card.classList.toggle('dim', cardAt > 5.6);
+      el.card.classList.toggle('dim', cardAt > 6.2);
 
       const hh = String(Math.floor(hours) % 24).padStart(2, '0');
       const mm = String(Math.floor((hours % 1) * 60)).padStart(2, '0');

@@ -216,13 +216,21 @@ document.body.classList.add('live');
 const marioPose = { x: 0, z: 16.2, yaw: Math.PI, moving: false, gesture: 'idle', lantern: false };
 const luigiPose = { x: 1.8, z: 17.1, yaw: Math.PI, moving: false, gesture: 'idle', lantern: false };
 
-function chasePose(state, tgt, dt) {
-  state.x += (tgt.x - state.x) * Math.min(1, dt * 1.8);
-  state.z += (tgt.z - state.z) * Math.min(1, dt * 1.8);
-  let dyaw = tgt.yaw - state.yaw;
-  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
-  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
-  state.yaw += dyaw * Math.min(1, dt * 2.4);
+function chasePose(state, tgt, dt, snap) {
+  const dx = tgt.x - state.x;
+  const dz = tgt.z - state.z;
+  if (snap || (dx * dx + dz * dz) > 64) {
+    state.x = tgt.x;
+    state.z = tgt.z;
+    state.yaw = tgt.yaw;
+  } else {
+    state.x += dx * Math.min(1, dt * 2.2);
+    state.z += dz * Math.min(1, dt * 2.2);
+    let dyaw = tgt.yaw - state.yaw;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    state.yaw += dyaw * Math.min(1, dt * 3.0);
+  }
   state.moving = !!tgt.moving;
   state.gesture = tgt.gesture || (tgt.moving ? 'walk' : 'idle');
   state.lantern = !!tgt.lantern;
@@ -244,7 +252,8 @@ renderer.setAnimationLoop(() => {
 
   const shot = director.shotAt(u);
   const chapter = chapterFor(shot.id);
-  if (shot.id !== lastShot) {
+  const shotCut = shot.id !== lastShot;
+  if (shotCut) {
     lastShot = shot.id;
     world.weather.set(chapter.weather);
   }
@@ -259,8 +268,8 @@ renderer.setAnimationLoop(() => {
 
   director.apply(u);
 
-  chasePose(marioPose, chapter.mario, dt);
-  chasePose(luigiPose, chapter.luigi || chapter.mario, dt);
+  chasePose(marioPose, chapter.mario, dt, shotCut);
+  chasePose(luigiPose, chapter.luigi || chapter.mario, dt, shotCut);
   mario.update(u, bridge, marioPose);
   luigi.update(u, bridge, luigiPose);
 
