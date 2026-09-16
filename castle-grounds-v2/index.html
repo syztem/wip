@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/build/three.core.js",
+      "three/webgpu": "./vendor/three/build/three.webgpu.js",
+      "three/tsl": "./vendor/three/build/three.tsl.js",
+      "three/addons/": "./vendor/three/examples/jsm/"
+    }
+  }
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#7eb7e8" />
+  <meta name="description" content="Interactive castle-grounds. A 36-second reel with time-of-day, weather, and take-the-wheel. three.js r186, vendored." />
+  <meta property="og:title" content="castle-grounds" />
+  <meta property="og:description" content="A 36-second reel through a castle's grounds. Take the wheel any time." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <title>castle-grounds</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%231a6b32' width='32' height='32'/%3E%3Crect x='10' y='8' width='12' height='14' fill='%23f2e2c4'/%3E%3Cpolygon points='10,8 16,3 22,8' fill='%23c42a2a'/%3E%3C/svg%3E" />
+  <style>
+    html, body {
+      margin: 0; height: 100%; overflow: hidden; background: #7eb7e8;
+      overscroll-behavior: none; touch-action: none;
+    }
+    canvas {
+      display: block; width: 100%; height: 100%; touch-action: none;
+      background: #7eb7e8;
+    }
+    #boot {
+      position: fixed; inset: 0; z-index: 8;
+      display: grid; place-items: center;
+      background: #6aa8dc;
+      transition: opacity 0.7s ease, visibility 0.7s ease;
+    }
+    #boot .mark {
+      font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.32em; text-transform: uppercase; color: #fff4d6;
+    }
+    #boot .sub {
+      margin-top: 10px;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.14em; color: rgba(255, 244, 214, 0.55);
+    }
+    body.live #boot { opacity: 0; visibility: hidden; pointer-events: none; }
+    body.dead #boot { display: none; }
+    #fps {
+      position: fixed; z-index: 2; pointer-events: none;
+      top: max(8px, env(safe-area-inset-top));
+      right: max(10px, env(safe-area-inset-right));
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: rgba(255, 255, 255, 0.42);
+      text-shadow: 0 1px 2px rgba(0,0,0,.55);
+    }
+    #share {
+      position: fixed; z-index: 3; cursor: pointer;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      right: max(10px, env(safe-area-inset-right));
+      padding: 6px 10px; border-radius: 4px;
+      font: 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.72);
+      background: rgba(0, 0, 0, 0.32);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      user-select: none; -webkit-user-select: none;
+      opacity: 0; pointer-events: none; visibility: hidden;
+      transition: opacity 0.18s ease;
+    }
+    body.live #share { visibility: visible; opacity: 0.35; pointer-events: auto; }
+    #share:hover, #share:focus-visible { opacity: 1; }
+    #share:focus-visible {
+      outline: 2px solid rgba(255, 255, 255, 0.85);
+      outline-offset: 3px;
+    }
+    body.live.paused #share { opacity: 1; }
+    body.live.player #share { opacity: 0; visibility: hidden; pointer-events: none; }
+    @media (hover: none) {
+      body.live #share { opacity: 0.7; }
+    }
+    #perf {
+      position: fixed; z-index: 2; pointer-events: none;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      left: max(10px, env(safe-area-inset-left));
+      padding: 8px 10px;
+      font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: rgba(255, 255, 255, 0.6);
+      background: rgba(0, 0, 0, 0.32);
+      text-shadow: 0 1px 2px rgba(0,0,0,.6);
+      white-space: pre;
+      border-radius: 4px;
+      opacity: 0.85;
+      display: none;
+    }
+    body.live.debug2 #perf { display: block; }
+    @media (max-width: 500px) { #perf { display: none !important; } }
+    #err {
+      position: fixed; inset: 0; display: none; place-items: center;
+      padding:
+        calc(24px + env(safe-area-inset-top, 0px))
+        calc(24px + env(safe-area-inset-right, 0px))
+        calc(24px + env(safe-area-inset-bottom, 0px))
+        calc(24px + env(safe-area-inset-left, 0px));
+      background: #102018; color: #ffb4a0;
+      font: 14px/1.5 system-ui, sans-serif; z-index: 9;
+      text-align: center; white-space: pre-wrap;
+    }
+    #err.help {
+      justify-items: start;
+      text-align: left;
+      font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding-left: max(24px, 8vw);
+      padding-right: max(24px, 8vw);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #boot { transition: none; }
+      #share { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="boot">
+    <div>
+      <div class="mark">castle-grounds</div>
+      <div class="sub">36s reel · r186</div>
+    </div>
+  </div>
+  <div id="fps"></div>
+  <div id="share" role="button" tabindex="0"
+       aria-label="Copy link to this moment"
+       title="Copy link to this moment"></div>
+  <div id="perf"></div>
+  <div id="err"></div>
+  <noscript>JavaScript required.</noscript>
+  <script>
+    (function () {
+      var p = location.pathname;
+      if (p.slice(-1) !== '/' && !/\.[a-zA-Z0-9]+$/.test(p)) {
+        location.replace(p + '/' + location.search + location.hash);
+      }
+      function die(msg) {
+        document.body.classList.add('dead');
+        var err = document.getElementById('err');
+        if (err) { err.style.display = 'grid'; err.textContent = msg; }
+      }
+      if (!HTMLScriptElement.supports || !HTMLScriptElement.supports('importmap')) {
+        die('Need a current Firefox, Chrome, Edge, or Safari (import maps).');
+        return;
+      }
+      window.addEventListener('error', function (e) {
+        if (document.body.classList.contains('live') || document.body.classList.contains('dead')) return;
+        die((e && e.message) ? e.message : 'script error');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        if (document.body.classList.contains('live') || document.body.classList.contains('dead')) return;
+        var r = e && e.reason;
+        die((r && r.message) ? r.message : String(r || 'boot failed'));
+      });
+      setTimeout(function () {
+        if (!document.body.classList.contains('live') && !document.body.classList.contains('dead')) {
+          die('Boot stalled. Hard-refresh.');
+        }
+      }, 15000);
+    })();
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
