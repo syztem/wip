@@ -14,6 +14,7 @@ import { createProps } from './scene/props.js';
 
 const orbitMode = /(?:\?|&)orbit=1(?:&|$)/.test(location.search);
 const debug = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
+const forceGLQuery = /(?:\?|&)webgl=1(?:&|$)/.test(location.search);
 const errEl = document.getElementById('err');
 const fpsEl = document.getElementById('fps');
 
@@ -31,18 +32,24 @@ function asset(relFromThisModule) {
 }
 
 async function loadEnv() {
-  const loader = new HDRLoader();
-  const tex = await loader.loadAsync(asset('../public/hdr/env.hdr'));
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  return tex;
+  const url = asset('../public/hdr/env.hdr');
+  const load = async (type) => {
+    const loader = new HDRLoader();
+    if (type) loader.type = type;
+    const tex = await loader.loadAsync(url);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    return tex;
+  };
+  try {
+    return await load();
+  } catch (e) {
+    console.warn('HDR half-float miss, FloatType', e);
+    return await load(THREE.FloatType);
+  }
 }
 
-async function main() {
-  const renderer = new THREE.WebGPURenderer({
-    antialias: true,
-    powerPreference: 'high-performance',
-  });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+function applyRenderer(renderer, webgl) {
+  renderer.setPixelRatio(Math.min(devicePixelRatio, webgl ? 1.25 : 1.75));
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -50,11 +57,36 @@ async function main() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   document.body.appendChild(renderer.domElement);
+}
+
+async function bootRenderer() {
+  const common = { antialias: true, powerPreference: 'high-performance' };
+  const wantGL = forceGLQuery
+    || (typeof navigator.gpu === 'undefined' && /\bFirefox\b/.test(navigator.userAgent));
+
+  const make = async (forceWebGL) => {
+    const renderer = new THREE.WebGPURenderer({ ...common, forceWebGL });
+    applyRenderer(renderer, forceWebGL);
+    await renderer.init();
+    return renderer;
+  };
 
   try {
-    await renderer.init();
+    return { renderer: await make(wantGL), webgl: wantGL };
   } catch (e) {
-    fail('WebGPU init failed. Need a GPU + current Chrome / Edge / Safari TP.', e);
+    console.warn('WebGPU init failed, WebGL2 backend', e);
+    document.querySelectorAll('canvas').forEach((c) => c.remove());
+    return { renderer: await make(true), webgl: true };
+  }
+}
+
+async function main() {
+  let renderer;
+  let webgl = false;
+  try {
+    ({ renderer, webgl } = await bootRenderer());
+  } catch (e) {
+    fail('Need WebGL2 (current Firefox / Chrome / Edge / Safari).', e);
     return;
   }
 
@@ -65,8 +97,16 @@ async function main() {
   camera.position.set(0.2, 1.72, 24.8);
   scene.add(camera);
 
-  const sky = createSky();
-  scene.add(sky.mesh);
+  let sky;
+  try {
+    sky = createSky();
+    scene.add(sky.mesh);
+  } catch (e) {
+    console.warn('SkyMesh miss', e);
+    const sunDir = new THREE.Vector3();
+    sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(44), THREE.MathUtils.degToRad(28));
+    sky = { mesh: null, sunDir };
+  }
 
   let env = null;
   try {
@@ -82,7 +122,8 @@ async function main() {
   const sun = new THREE.DirectionalLight(0xfff1d0, 2.6);
   sun.position.copy(sky.sunDir).multiplyScalar(90);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  const shadowRes = webgl ? 1024 : 2048;
+  sun.shadow.mapSize.set(shadowRes, shadowRes);
   sun.shadow.camera.near = 10;
   sun.shadow.camera.far = 180;
   sun.shadow.camera.left = -50;
@@ -102,10 +143,13 @@ async function main() {
   const bridge = createBridge();
   scene.add(bridge.group);
 
-  const water = createWater();
-  scene.add(water.mesh);
-  if (env) {
-    water.mesh.material.envMapIntensity = 1.2;
+  let water;
+  try {
+    water = createWater();
+    scene.add(water.mesh);
+    if (env) water.mesh.material.envMapIntensity = 1.2;
+  } catch (e) {
+    console.warn('TSL water miss', e);
   }
 
   const trees = createTrees();
@@ -163,7 +207,9 @@ async function main() {
   });
 
   document.body.classList.add('live');
-  if (debug) console.info('castle-grounds loop', LOOP, 's', post.enabled ? 'bloom' : 'no-bloom');
+  if (debug) {
+    console.info('castle-grounds loop', LOOP, 's', post.enabled ? 'bloom' : 'no-bloom', webgl ? 'webgl2' : 'webgpu');
+  }
 }
 
 main().catch((e) => fail('boot failed', e));
