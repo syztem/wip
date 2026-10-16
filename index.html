@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Night run up an inverted ramp in a white roadster.">
+<title>Roadster Ramp</title>
+<script src="https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js"></script>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #f4f7fb;
+  user-select: none;
+}
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+#left { position: absolute; top: 26px; left: 26px; }
+#right { position: absolute; top: 26px; right: 26px; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.pair { display: flex; gap: 12px; }
+.gauge {
+  --p: 0%;
+  width: 158px;
+  height: 158px;
+  border-radius: 50%;
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 50%, #07090d 0 58%, transparent 59%),
+    conic-gradient(from -90deg, #ff2a2a var(--p), rgba(255,255,255,.22) 0);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.32);
+}
+.gauge.sm { width: 112px; height: 112px; }
+.gauge::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from -90deg, rgba(255,255,255,.75) 0 1deg, transparent 1deg 30deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 86%, #000 87% 92%, transparent 93%);
+  mask: radial-gradient(circle, transparent 0 86%, #000 87% 92%, transparent 93%);
+}
+.face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+.face b { font-size: 30px; font-weight: 600; letter-spacing: -0.04em; line-height: 1; }
+.gauge.sm .face b { font-size: 20px; }
+.face span { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.72; }
+.face small { font-size: 10px; opacity: 0.48; }
+#sil { width: 150px; height: 64px; margin-top: 16px; display: block; overflow: visible; transform-origin: 50% 68%; }
+#panel { position: fixed; left: 22px; bottom: 22px; width: min(340px, calc(100% - 44px)); z-index: 6; }
+.card { background: rgba(7,9,13,.86); border: 1px solid rgba(255,255,255,.14); border-radius: 16px; padding: 14px 16px 12px; }
+.kicker { color: #ff3a3a; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; }
+.card h2 { margin: 4px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+.card p { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: rgba(244,247,251,.72); }
+.row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; margin: 3px 0; font-variant-numeric: tabular-nums; }
+.row span { opacity: 0.6; }
+.choices, .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+button { font: inherit; color: #f4f7fb; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16); border-radius: 999px; padding: 8px 12px; cursor: pointer; }
+button:hover { background: rgba(255,255,255,.12); }
+button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+button[data-act="start"] { background: #d31313; border-color: transparent; }
+button[data-act="start"]:hover { background: #ef2a2a; }
+#bar { position: fixed; right: 22px; bottom: 22px; display: flex; gap: 8px; z-index: 6; }
+#meter { position: fixed; left: 50%; bottom: 30px; width: 168px; height: 3px; margin-left: -84px; background: rgba(255,255,255,.16); z-index: 5; pointer-events: none; }
+#meter i { display: block; height: 100%; width: 0; background: #ff2a2a; }
+#gas, #brake { display: none; }
+@media (max-width: 820px) {
+  #left { top: 10px; left: 10px; }
+  #right { top: 10px; right: 10px; }
+  .gauge { width: 108px; height: 108px; }
+  .gauge.sm { width: 86px; height: 86px; }
+  .face b { font-size: 18px; }
+  .gauge.sm .face b { font-size: 15px; }
+  #sil { width: 108px; height: 46px; }
+  #panel { left: 10px; right: 10px; width: auto; bottom: 62px; }
+  #bar { left: 10px; right: 10px; bottom: 10px; justify-content: space-between; }
+  #meter { bottom: 50px; }
+}
+@media (pointer: coarse) {
+  #gas, #brake { display: block; position: fixed; bottom: 0; width: 50%; height: 46%; z-index: 4; background: transparent; border: 0; padding: 0; }
+  #brake { left: 0; }
+  #gas { right: 0; }
+}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="White roadster on a night ramp"></canvas>
+<div id="hud">
+  <div id="left">
+    <div class="gauge" id="g-df">
+      <div class="face"><b id="n-df">0</b><span>Downforce</span><small>kg</small></div>
+    </div>
+    <svg id="sil" viewBox="0 0 160 70" aria-hidden="true">
+      <path fill="#f5f7fb" d="M18 48h16a11 11 0 0 1 22 0h22l8-6 18-10 20-2 14 6 10 10h8a10 10 0 0 1 20 0h4v5h-8a11 11 0 0 1-22 0H78a11 11 0 0 1-22 0H18z"/>
+      <path fill="#161b22" d="M86 42l14-16h24l6 16z"/>
+      <circle cx="45" cy="48" r="8" fill="#0c0e12"/>
+      <circle cx="128" cy="48" r="8" fill="#0c0e12"/>
+      <circle cx="45" cy="48" r="3" fill="#c8cdd4"/>
+      <circle cx="128" cy="48" r="3" fill="#c8cdd4"/>
+    </svg>
+  </div>
+  <div id="right">
+    <div class="gauge" id="g-pitch">
+      <div class="face"><b id="n-pitch">0</b><span>Pitch</span><small>deg</small></div>
+    </div>
+    <div class="pair">
+      <div class="gauge sm" id="g-alt">
+        <div class="face"><b id="n-alt">0</b><span>Altitude</span><small>ft</small></div>
+      </div>
+      <div class="gauge sm" id="g-g">
+        <div class="face"><b id="n-g">0.0</b><span>G-Force</span><small>g</small></div>
+      </div>
+    </div>
+  </div>
+  <div id="meter" aria-hidden="true"><i id="meter-fill"></i></div>
+</div>
+<div id="panel"></div>
+<div id="bar">
+  <button type="button" data-act="start">Start</button>
+  <button type="button" data-act="reset">Reset</button>
+  <button type="button" data-act="cam">Camera</button>
+  <button type="button" hx-get="js:globalThis.openPanel('menu',this)" hx-target="#panel" hx-swap="innerHTML">Challenges</button>
+</div>
+<button id="brake" type="button" aria-label="Brake"></button>
+<button id="gas" type="button" aria-label="Throttle"></button>
+<template id="tpl-menu">
+  <div class="card">
+    <div class="kicker">Night ramp</div>
+    <h2>Challenges</h2>
+    <p>Hold the inversion, chase a downforce number, or take the ramp in one pass.</p>
+    <div class="choices">
+      <button type="button" hx-get="js:globalThis.openPanel('ascent',this)" hx-target="#panel" hx-swap="innerHTML">Ascent</button>
+      <button type="button" hx-get="js:globalThis.openPanel('force',this)" hx-target="#panel" hx-swap="innerHTML">Max Downforce</button>
+      <button type="button" hx-get="js:globalThis.openPanel('run',this)" hx-target="#panel" hx-swap="innerHTML">Full Run</button>
+      <button type="button" hx-get="js:globalThis.openPanel('hold',this)" hx-target="#panel" hx-swap="innerHTML">Hold</button>
+    </div>
+  </div>
+</template>
+<template id="tpl-ascent">
+  <div class="card">
+    <div class="kicker">Challenge</div>
+    <h2>Ascent</h2>
+    <p>Reach the inverted apex with real downforce and hold for 3 seconds. No reverse.</p>
+    <div class="row"><span>Status</span><b id="state">Ready</b></div>
+    <div class="row"><span>Score</span><b id="score">0.0s</b></div>
+    <div class="row"><span>Best</span><b id="best">__BEST__</b></div>
+    <div class="actions">
+      <button type="button" data-act="start" data-ch="ascent">Start</button>
+      <button type="button" hx-get="js:globalThis.openPanel('menu',this)" hx-target="#panel" hx-swap="innerHTML">Back</button>
+    </div>
+  </div>
+</template>
+<template id="tpl-force">
+  <div class="card">
+    <div class="kicker">Challenge</div>
+    <h2>Max Downforce</h2>
+    <p>Drive the inversion hard. Clear the run at 3200 kg.</p>
+    <div class="row"><span>Status</span><b id="state">Ready</b></div>
+    <div class="row"><span>Score</span><b id="score">0</b></div>
+    <div class="row"><span>Best</span><b id="best">__BEST__</b></div>
+    <div class="actions">
+      <button type="button" data-act="start" data-ch="force">Start</button>
+      <button type="button" hx-get="js:globalThis.openPanel('menu',this)" hx-target="#panel" hx-swap="innerHTML">Back</button>
+    </div>
+  </div>
+</template>
+<template id="tpl-run">
+  <div class="card">
+    <div class="kicker">Challenge</div>
+    <h2>Full Run</h2>
+    <p>Cross the apex and return to the ground in under 20 seconds.</p>
+    <div class="row"><span>Status</span><b id="state">Ready</b></div>
+    <div class="row"><span>Score</span><b id="score">0.00s</b></div>
+    <div class="row"><span>Best</span><b id="best">__BEST__</b></div>
+    <div class="actions">
+      <button type="button" data-act="start" data-ch="run">Start</button>
+      <button type="button" hx-get="js:globalThis.openPanel('menu',this)" hx-target="#panel" hx-swap="innerHTML">Back</button>
+    </div>
+  </div>
+</template>
+<template id="tpl-hold">
+  <div class="card">
+    <div class="kicker">Challenge</div>
+    <h2>Hold</h2>
+    <p>Stay between 62 and 96 feet for 4 seconds.</p>
+    <div class="row"><span>Status</span><b id="state">Ready</b></div>
+    <div class="row"><span>Score</span><b id="score">0.0s</b></div>
+    <div class="row"><span>Best</span><b id="best">__BEST__</b></div>
+    <div class="actions">
+      <button type="button" data-act="start" data-ch="hold">Start</button>
+      <button type="button" hx-get="js:globalThis.openPanel('menu',this)" hx-target="#panel" hx-swap="innerHTML">Back</button>
+    </div>
+  </div>
+</template>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.webgpu.js",
+    "three/webgpu": "https://unpkg.com/three@0.170.0/build/three.webgpu.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script>
+htmx.config.history = false;
+const RR = { best: { ascent: 0, force: 0, run: 0, hold: 0 }, ch: 'ascent' };
+try {
+  const raw = localStorage.getItem('roadster-ramp-best');
+  if (raw) {
+    const saved = JSON.parse(raw);
+    RR.best.ascent = +saved.ascent || 0;
+    RR.best.force = +saved.force || 0;
+    RR.best.run = +saved.run || 0;
+    RR.best.hold = +saved.hold || 0;
+  }
+} catch (e) {}
+function bestText(ch) {
+  if (ch === 'force') return String(Math.round(RR.best.force));
+  if (ch === 'run') return RR.best.run ? RR.best.run.toFixed(2) + 's' : 'None';
+  if (ch === 'hold') return RR.best.hold.toFixed(1) + 's';
+  return RR.best.ascent.toFixed(1) + 's';
+}
+function panelHTML(id) {
+  const tpl = document.getElementById('tpl-' + id);
+  if (!tpl) return '<div class="card"></div>';
+  return tpl.innerHTML.replaceAll('__BEST__', bestText(id));
+}
+function persist() {
+  try { localStorage.setItem('roadster-ramp-best', JSON.stringify(RR.best)); } catch (e) {}
+}
+async function openPanel(id, source) {
+  if (id && id !== 'menu') RR.ch = id;
+  const target = document.getElementById('panel');
+  if (!target) return;
+  const src = source && source.nodeType === 1 ? source : target;
+  try {
+    await htmx.swap({ text: panelHTML(id), target: target, swap: 'innerHTML', sourceElement: src });
+  } catch (e) {}
+}
+function swapIf(id, value) {
+  const el = document.getElementById(id);
+  if (!el || el.dataset.v === value) return;
+  el.dataset.v = value;
+  htmx.swap({ text: value, target: el, swap: 'textContent', sourceElement: el }).catch(function () {});
+}
+function paintScore(score, best, status) {
+  swapIf('score', score);
+  swapIf('best', best);
+  swapIf('state', status);
+}
+RR.persist = persist;
+globalThis.RR = RR;
+globalThis.openPanel = openPanel;
+globalThis.paintScore = paintScore;
+globalThis.bestText = bestText;
+openPanel('menu', document.getElementById('panel'));
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { TextureLoader } from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const HDRI = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/dikhololo_night_1k.hdr';
+const AD = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg';
+const AR = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_rough_1k.jpg';
+const AN = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_nor_gl_1k.jpg';
+const MD = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_diff_1k.jpg';
+const MR = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_rough_1k.jpg';
+const MN = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/metal_plate/metal_plate_nor_gl_1k.jpg';
+const CAR = 'https://raw.githubusercontent.com/auraoneai/aura3d-cc0-assets/main/kenney/car-kit/race.glb';
+const SEG = 96;
+const MAX_SPEED = 12;
+const DEG = 57.29577951308232;
+
+const canvas = document.getElementById('c');
+const renderer = new WebGPURenderer({ canvas: canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x000000, 0.008);
+scene.environmentIntensity = 0.4;
+
+const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.15, 500);
+const fixedPos = new THREE.Vector3(52, 16, 10);
+const fixedLook = new THREE.Vector3(0, 14, 4);
+camera.position.copy(fixedPos);
+camera.lookAt(fixedLook);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enabled = false;
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 4;
+controls.maxDistance = 150;
+controls.maxPolarAngle = Math.PI * 0.92;
+controls.target.copy(fixedLook);
+
+const asphaltMat = new THREE.MeshStandardMaterial({ color: 0x6a6f73, roughness: 0.92, metalness: 0.04, side: THREE.DoubleSide });
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x2c3034, roughness: 0.96, metalness: 0.02 });
+const metalMat = new THREE.MeshStandardMaterial({ color: 0x8d959c, roughness: 0.38, metalness: 0.88, side: THREE.DoubleSide });
+const edgeMat = new THREE.MeshBasicMaterial({ color: 0xff1a1a, side: THREE.DoubleSide });
+edgeMat.toneMapped = false;
+
+scene.add(new THREE.AmbientLight(0x93a4c4, 0.07));
+const key = new THREE.DirectionalLight(0xc5d6ff, 8);
+key.position.set(36, 42, 20);
+key.target.position.set(0, 12, 4);
+scene.add(key);
+scene.add(key.target);
+const fill = new THREE.DirectionalLight(0x7d8eae, 1.15);
+fill.position.set(-28, 14, -16);
+fill.target.position.set(0, 10, 6);
+scene.add(fill);
+scene.add(fill.target);
+
+const curve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0, 0.35, 42),
+  new THREE.Vector3(0, 0.35, 30),
+  new THREE.Vector3(0, 0.55, 20),
+  new THREE.Vector3(0, 1.2, 12),
+  new THREE.Vector3(0, 3.2, 6),
+  new THREE.Vector3(0, 7.5, 1.5),
+  new THREE.Vector3(0, 13.5, -1.5),
+  new THREE.Vector3(0, 20.5, -2.2),
+  new THREE.Vector3(0, 26.5, -0.4),
+  new THREE.Vector3(0, 29.6, 2.6),
+  new THREE.Vector3(0, 28.4, 6.2),
+  new THREE.Vector3(0, 23.5, 8.6),
+  new THREE.Vector3(0, 16.5, 9.2),
+  new THREE.Vector3(0, 9, 8),
+  new THREE.Vector3(0, 3.2, 5.2),
+  new THREE.Vector3(0, 0.7, 1.5),
+  new THREE.Vector3(0, 0.35, -6),
+  new THREE.Vector3(0, 0.35, -16)
+], false, 'centripetal', 0.5);
+const curveLen = curve.getLength();
+
+function buildFrames(path, seg) {
+  const count = seg + 1;
+  const P = new Array(count);
+  const T = new Array(count);
+  const N = new Array(count);
+  const R = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const u = i / seg;
+    P[i] = path.getPointAt(u);
+    T[i] = path.getTangentAt(u).normalize();
+  }
+  const n0 = new THREE.Vector3(0, 1, 0);
+  n0.addScaledVector(T[0], -n0.dot(T[0]));
+  if (n0.lengthSq() < 1e-8) n0.set(0, 0, 1);
+  n0.normalize();
+  const r0 = new THREE.Vector3().crossVectors(T[0], n0).normalize();
+  n0.crossVectors(r0, T[0]).normalize();
+  N[0] = n0;
+  R[0] = r0;
+  const axis = new THREE.Vector3();
+  for (let i = 1; i < count; i++) {
+    axis.crossVectors(T[i - 1], T[i]);
+    const len = axis.length();
+    const nn = N[i - 1].clone();
+    if (len > 1e-6) {
+      axis.multiplyScalar(1 / len);
+      const dot = T[i - 1].dot(T[i]);
+      const cl = dot > 1 ? 1 : dot < -1 ? -1 : dot;
+      nn.applyAxisAngle(axis, Math.acos(cl));
+    }
+    nn.addScaledVector(T[i], -nn.dot(T[i])).normalize();
+    const rr = new THREE.Vector3().crossVectors(T[i], nn).normalize();
+    nn.crossVectors(rr, T[i]).normalize();
+    N[i] = nn;
+    R[i] = rr;
+  }
+  return { P: P, T: T, N: N, R: R, count: count, seg: seg };
+}
+
+function extrude(frames, halfW, halfH, lift, material, tile) {
+  const seg = frames.seg;
+  const rings = seg + 1;
+  const pos = new Float32Array(rings * 24);
+  const nrm = new Float32Array(rings * 24);
+  const uv = new Float32Array(rings * 16);
+  const idx = new Uint16Array(seg * 24);
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const r = new THREE.Vector3();
+  const invN = new THREE.Vector3();
+  const invR = new THREE.Vector3();
+  const tl = new THREE.Vector3();
+  const trv = new THREE.Vector3();
+  const bl = new THREE.Vector3();
+  const br = new THREE.Vector3();
+  const prev = new THREE.Vector3();
+  const pairs = [0, 1, 2, 3, 4, 5, 6, 7];
+  let arc = 0;
+  function put(vi, p, nn, u, v) {
+    pos[vi * 3] = p.x;
+    pos[vi * 3 + 1] = p.y;
+    pos[vi * 3 + 2] = p.z;
+    nrm[vi * 3] = nn.x;
+    nrm[vi * 3 + 1] = nn.y;
+    nrm[vi * 3 + 2] = nn.z;
+    uv[vi * 2] = u;
+    uv[vi * 2 + 1] = v;
+  }
+  for (let i = 0; i < rings; i++) {
+    c.copy(frames.P[i]);
+    n.copy(frames.N[i]);
+    r.copy(frames.R[i]);
+    if (i) arc += prev.distanceTo(c);
+    prev.copy(c);
+    c.addScaledVector(n, lift);
+    tl.copy(c).addScaledVector(r, -halfW).addScaledVector(n, halfH);
+    trv.copy(c).addScaledVector(r, halfW).addScaledVector(n, halfH);
+    br.copy(c).addScaledVector(r, halfW).addScaledVector(n, -halfH);
+    bl.copy(c).addScaledVector(r, -halfW).addScaledVector(n, -halfH);
+    invN.copy(n).negate();
+    invR.copy(r).negate();
+    const u = arc / tile;
+    const base = i * 8;
+    put(base, tl, n, u, 0);
+    put(base + 1, trv, n, u, 2);
+    put(base + 2, trv, r, u, 0);
+    put(base + 3, br, r, u, 1);
+    put(base + 4, br, invN, u, 1);
+    put(base + 5, bl, invN, u, 0);
+    put(base + 6, bl, invR, u, 1);
+    put(base + 7, tl, invR, u, 0);
+  }
+  let k = 0;
+  for (let i = 0; i < seg; i++) {
+    const a = i * 8;
+    const b = a + 8;
+    for (let f = 0; f < 4; f++) {
+      const c0 = pairs[f * 2];
+      const c1 = pairs[f * 2 + 1];
+      idx[k++] = a + c0;
+      idx[k++] = a + c1;
+      idx[k++] = b + c1;
+      idx[k++] = a + c0;
+      idx[k++] = b + c1;
+      idx[k++] = b + c0;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  return new THREE.Mesh(geo, material);
+}
+
+function ribbon(frames, halfW, halfH) {
+  const seg = frames.seg;
+  const rings = seg + 1;
+  const pos = new Float32Array(rings * 12);
+  const idx = new Uint16Array(seg * 12);
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const r = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  function put(vi) {
+    pos[vi * 3] = p.x;
+    pos[vi * 3 + 1] = p.y;
+    pos[vi * 3 + 2] = p.z;
+  }
+  for (let i = 0; i < rings; i++) {
+    c.copy(frames.P[i]);
+    n.copy(frames.N[i]);
+    r.copy(frames.R[i]);
+    const o = i * 4;
+    p.copy(c).addScaledVector(r, -(halfW - 0.02)).addScaledVector(n, halfH + 0.025);
+    put(o);
+    p.copy(c).addScaledVector(r, -(halfW + 0.09)).addScaledVector(n, halfH + 0.05);
+    put(o + 1);
+    p.copy(c).addScaledVector(r, halfW - 0.02).addScaledVector(n, halfH + 0.025);
+    put(o + 2);
+    p.copy(c).addScaledVector(r, halfW + 0.09).addScaledVector(n, halfH + 0.05);
+    put(o + 3);
+  }
+  let k = 0;
+  for (let i = 0; i < seg; i++) {
+    const a = i * 4;
+    const b = a + 4;
+    idx[k++] = a + 1;
+    idx[k++] = a;
+    idx[k++] = b;
+    idx[k++] = a + 1;
+    idx[k++] = b;
+    idx[k++] = b + 1;
+    idx[k++] = a + 2;
+    idx[k++] = a + 3;
+    idx[k++] = b + 3;
+    idx[k++] = a + 2;
+    idx[k++] = b + 3;
+    idx[k++] = b + 2;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  return new THREE.Mesh(geo, edgeMat);
+}
+
+const frames = buildFrames(curve, SEG);
+let apexI = 0;
+let minNy = 2;
+for (let i = 0; i < frames.count; i++) {
+  if (frames.N[i].y < minNy) {
+    minNy = frames.N[i].y;
+    apexI = i;
+  }
+}
+const apexU = apexI / SEG;
+const apex = frames.P[apexI];
+
+const road = extrude(frames, 3, 0.14, 0, asphaltMat, 3);
+const spine = extrude(frames, 0.22, 0.18, -0.46, metalMat, 3);
+const edges = ribbon(frames, 3, 0.14);
+scene.add(road);
+scene.add(spine);
+scene.add(edges);
+
+const pillar = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), metalMat, 16);
+const dummy = new THREE.Object3D();
+const under = new THREE.Vector3();
+let pillarCount = 0;
+for (let i = 2; i < frames.count && pillarCount < 16; i += 4) {
+  const normal = frames.N[i];
+  const point = frames.P[i];
+  if (normal.y < 0.42) continue;
+  under.copy(point).addScaledVector(normal, -0.14);
+  if (under.y < 1.5) continue;
+  dummy.position.set(under.x, under.y * 0.5, under.z);
+  dummy.scale.set(0.42, under.y, 0.42);
+  dummy.rotation.set(0, 0, 0);
+  dummy.updateMatrix();
+  pillar.setMatrixAt(pillarCount, dummy.matrix);
+  pillarCount++;
+}
+pillar.count = pillarCount;
+pillar.instanceMatrix.needsUpdate = true;
+pillar.frustumCulled = false;
+scene.add(pillar);
+
+function mast(x, z) {
+  const pole = new THREE.Mesh(new THREE.BoxGeometry(0.35, 34, 0.35), metalMat);
+  pole.position.set(x, 17, z);
+  scene.add(pole);
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, 0.6), metalMat);
+  cap.position.set(x, 34.15, z);
+  scene.add(cap);
+  const glow = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 0.18), edgeMat);
+  glow.position.set(x, 34.34, z);
+  scene.add(glow);
+}
+mast(6.4, apex.z);
+mast(-6.4, apex.z);
+
+const spot = new THREE.SpotLight(0xe9f2ff, 55, 40, 0.9, 0.6, 0);
+spot.position.copy(apex).addScaledVector(frames.N[apexI], 8);
+spot.position.x += 8;
+spot.position.z += 2.5;
+spot.target.position.copy(apex).addScaledVector(frames.N[apexI], 0.3);
+scene.add(spot);
+scene.add(spot.target);
+
+const groundGeo = new THREE.CircleGeometry(170, 64);
+groundGeo.rotateX(-Math.PI / 2);
+const guv = groundGeo.attributes.uv;
+for (let i = 0; i < guv.count; i++) guv.setXY(i, guv.getX(i) * 96, guv.getY(i) * 96);
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.position.y = -0.05;
+scene.add(ground);
+
+const car = new THREE.Group();
+scene.add(car);
+let wheels = [];
+let wheelRadius = 0.34;
+let tailMat = null;
+let carPaint = null;
+let carRubber = null;
+
+function buildProcedural() {
+  carPaint = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.42, roughness: 0.28 });
+  carRubber = new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0.08, roughness: 0.74 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x10141a, metalness: 0.1, roughness: 0.06 });
+  const lamp = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xf3f7ff, emissiveIntensity: 3.2, roughness: 0.25 });
+  tailMat = new THREE.MeshStandardMaterial({ color: 0x2a0000, emissive: 0xff1c1c, emissiveIntensity: 2.5, roughness: 0.35 });
+  const add = (w, h, d, mat, x, y, z, rx) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y, z);
+    if (rx) mesh.rotation.x = rx;
+    car.add(mesh);
+  };
+  add(1.86, 0.36, 2.55, carPaint, 0, 0.5, 0.02);
+  add(1.68, 0.2, 1.2, carPaint, 0, 0.46, 1.42);
+  add(1.52, 0.08, 0.9, carPaint, 0, 0.6, 1.12, -0.32);
+  add(1.74, 0.28, 0.98, carPaint, 0, 0.58, -1.22);
+  add(1.32, 0.34, 0.92, glass, 0, 0.86, -0.12);
+  add(1.36, 0.3, 0.05, glass, 0, 0.78, 0.4, -0.7);
+  add(1.48, 0.07, 0.26, carPaint, 0, 1.02, -1.58);
+  add(0.08, 0.2, 0.08, carPaint, 0.42, 0.86, -1.5);
+  add(0.08, 0.2, 0.08, carPaint, -0.42, 0.86, -1.5);
+  add(0.16, 0.08, 0.14, carPaint, 0.96, 0.72, 0.2);
+  add(0.16, 0.08, 0.14, carPaint, -0.96, 0.72, 0.2);
+  add(0.24, 0.1, 0.08, lamp, 0.55, 0.48, 2.02);
+  add(0.24, 0.1, 0.08, lamp, -0.55, 0.48, 2.02);
+  add(0.32, 0.1, 0.06, tailMat, 0.62, 0.64, -1.72);
+  add(0.32, 0.1, 0.06, tailMat, -0.62, 0.64, -1.72);
+  add(1.5, 0.08, 0.24, carPaint, 0, 0.26, -1.7);
+  const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.24, 10);
+  wheelGeo.rotateZ(Math.PI / 2);
+  wheels = [];
+  const spots = [0.9, 1.22, -0.9, 1.22, 0.9, -1.2, -0.9, -1.2];
+  for (let i = 0; i < 4; i++) {
+    const w = new THREE.Mesh(wheelGeo, carRubber);
+    w.position.set(spots[i * 2], 0.34, spots[i * 2 + 1]);
+    car.add(w);
+    wheels.push(w);
+  }
+  wheelRadius = 0.34;
+}
+buildProcedural();
+
+const textureLoader = new TextureLoader();
+const rgbeLoader = new RGBELoader();
+const gltfLoader = new GLTFLoader();
+
+function tex(url, srgb) {
+  return new Promise((resolve) => {
+    textureLoader.load(url, (map) => {
+      map.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+      map.wrapS = THREE.RepeatWrapping;
+      map.wrapT = THREE.RepeatWrapping;
+      resolve(map);
+    }, undefined, () => resolve(null));
+  });
+}
+function apply(mat, diff, rough, nor, tint) {
+  if (diff) {
+    mat.map = diff;
+    mat.color.setHex(tint);
+  }
+  if (rough) mat.roughnessMap = rough;
+  if (nor) mat.normalMap = nor;
+  mat.needsUpdate = true;
+}
+function mountGLB(root) {
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const parentName = obj.parent && obj.parent.name ? obj.parent.name : '';
+    obj.material = /wheel/i.test(obj.name + parentName) ? carRubber : carPaint;
+  });
+  const spins = [];
+  root.traverse((obj) => {
+    if (obj.name && /wheel/i.test(obj.name)) spins.push(obj);
+  });
+  root.scale.setScalar(1.72);
+  car.clear();
+  car.add(root);
+  const tailGeo = new THREE.BoxGeometry(0.22, 0.08, 0.05);
+  const t1 = new THREE.Mesh(tailGeo, tailMat);
+  const t2 = new THREE.Mesh(tailGeo, tailMat);
+  t1.position.set(0.55, 0.62, -2.2);
+  t2.position.set(-0.55, 0.62, -2.2);
+  car.add(t1);
+  car.add(t2);
+  wheels = spins;
+  wheelRadius = 0.516;
+}
+async function loadAssets() {
+  const maps = await Promise.all([
+    tex(AD, true), tex(AR, false), tex(AN, false),
+    tex(MD, true), tex(MR, false), tex(MN, false)
+  ]);
+  apply(asphaltMat, maps[0], maps[1], maps[2], 0xffffff);
+  apply(groundMat, maps[0], maps[1], maps[2], 0x8e9498);
+  apply(metalMat, maps[3], maps[4], maps[5], 0xffffff);
+  try {
+    const hdr = await rgbeLoader.loadAsync(HDRI);
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    try {
+      const pm = new THREE.PMREMGenerator(renderer);
+      pm.compileEquirectangularShader();
+      scene.environment = pm.fromEquirectangular(hdr).texture;
+      hdr.dispose();
+      pm.dispose();
+    } catch (err) {
+      scene.environment = hdr;
+    }
+  } catch (err) {}
+  try {
+    const gltf = await gltfLoader.loadAsync(CAR);
+    mountGLB(gltf.scene);
+  } catch (err) {}
+}
+
+let mode = 0;
+let t = 0.2;
+let speed = 0;
+let throttle = 0;
+let carry = 0;
+let boost = 0;
+let boostCd = 0;
+let keyUp = false;
+let keyDown = false;
+let touchUp = false;
+let touchDown = false;
+let phase = 'ready';
+let ascentHold = 0;
+let ascentPeak = 0;
+let peakForce = 0;
+let holdTime = 0;
+let holdPeak = 0;
+let runTime = 0;
+let df = 0;
+let shownDf = -1;
+let shownPitch = -999;
+let shownAlt = -999;
+let shownG = -999;
+let shownSil = -9999;
+let shownTh = -1;
+let lastBrake = -1;
+
+const _p = new THREE.Vector3();
+const _t = new THREE.Vector3();
+const _n = new THREE.Vector3();
+const _r = new THREE.Vector3();
+const _m = new THREE.Matrix4();
+const _cam = new THREE.Vector3();
+const lookAt = new THREE.Vector3().copy(fixedLook);
+const _look = new THREE.Vector3();
+
+const nDf = document.getElementById('n-df');
+const nPitch = document.getElementById('n-pitch');
+const nAlt = document.getElementById('n-alt');
+const nG = document.getElementById('n-g');
+const gDf = document.getElementById('g-df');
+const gPitch = document.getElementById('g-pitch');
+const gAlt = document.getElementById('g-alt');
+const gG = document.getElementById('g-g');
+const sil = document.getElementById('sil');
+const meterFill = document.getElementById('meter-fill');
+
+function pose(u) {
+  let x = u * SEG;
+  if (x < 0) x = 0;
+  let i = x | 0;
+  let f = x - i;
+  if (i >= SEG) {
+    i = SEG - 1;
+    f = 1;
+  }
+  _p.lerpVectors(frames.P[i], frames.P[i + 1], f);
+  _t.lerpVectors(frames.T[i], frames.T[i + 1], f).normalize();
+  _n.lerpVectors(frames.N[i], frames.N[i + 1], f).normalize();
+  _r.crossVectors(_t, _n).normalize();
+  _n.crossVectors(_r, _t).normalize();
+}
+function cycleCam() {
+  if (mode === 2) lookAt.copy(controls.target);
+  mode = (mode + 1) % 3;
+  controls.enabled = mode === 2;
+  if (mode === 2) {
+    controls.target.copy(lookAt);
+    controls.update();
+  }
+}
+function begin(ch) {
+  if (ch) RR.ch = ch;
+  t = 0.002;
+  speed = 0;
+  throttle = 0;
+  carry = 0;
+  boost = 0;
+  ascentHold = 0;
+  ascentPeak = 0;
+  peakForce = 0;
+  holdTime = 0;
+  holdPeak = 0;
+  runTime = 0;
+  phase = 'live';
+  openPanel(RR.ch, document.getElementById('panel'));
+}
+function resetRun() {
+  t = 0.002;
+  speed = 0;
+  throttle = 0;
+  carry = 0;
+  boost = 0;
+  ascentHold = 0;
+  ascentPeak = 0;
+  peakForce = 0;
+  holdTime = 0;
+  holdPeak = 0;
+  runTime = 0;
+  phase = 'ready';
+}
+function scoreNow() {
+  if (phase === 'ready') {
+    if (RR.ch === 'force') return '0';
+    if (RR.ch === 'run') return '0.00s';
+    return '0.0s';
+  }
+  if (RR.ch === 'ascent') return ascentPeak.toFixed(1) + 's';
+  if (RR.ch === 'force') return String(Math.round(peakForce));
+  if (RR.ch === 'run') return runTime.toFixed(2) + 's';
+  return holdPeak.toFixed(1) + 's';
+}
+function statusNow() {
+  if (phase === 'live') return 'Live';
+  if (phase === 'clear') return 'Clear';
+  if (phase === 'fail') return 'Fail';
+  return 'Ready';
+}
+function stepChallenge(dt, alt) {
+  if (phase === 'ready') {
+    paintScore(scoreNow(), bestText(RR.ch), statusNow());
+    return;
+  }
+  if (RR.ch === 'ascent') {
+    if (Math.abs(t - apexU) <= 0.045 && df >= 1200) ascentHold += dt;
+    else ascentHold = 0;
+    if (ascentHold > ascentPeak) {
+      ascentPeak = ascentHold;
+      if (ascentPeak > RR.best.ascent) {
+        RR.best.ascent = ascentPeak;
+        RR.persist();
+      }
+    }
+    if (ascentPeak >= 3) phase = 'clear';
+  } else if (RR.ch === 'force') {
+    if (df > peakForce) {
+      peakForce = df;
+      if (peakForce > RR.best.force) {
+        RR.best.force = peakForce;
+        RR.persist();
+      }
+    }
+    if (peakForce >= 3200) phase = 'clear';
+  } else if (RR.ch === 'run') {
+    if (phase === 'live') {
+      runTime += dt;
+      if (t >= 0.98) {
+        phase = 'clear';
+        if (!RR.best.run || runTime < RR.best.run) {
+          RR.best.run = runTime;
+          RR.persist();
+        }
+      } else if (runTime >= 20) phase = 'fail';
+    }
+  } else if (RR.ch === 'hold') {
+    if (alt >= 62 && alt <= 96) holdTime += dt;
+    else holdTime = 0;
+    if (holdTime > holdPeak) {
+      holdPeak = holdTime;
+      if (holdPeak > RR.best.hold) {
+        RR.best.hold = holdPeak;
+        RR.persist();
+      }
+    }
+    if (holdPeak >= 4) phase = 'clear';
+  }
+  paintScore(scoreNow(), bestText(RR.ch), statusNow());
+}
+
+addEventListener('keydown', (e) => {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp') keyUp = true;
+  else if (e.code === 'KeyS' || e.code === 'ArrowDown') keyDown = true;
+  else if (e.code === 'KeyC' && !e.repeat) cycleCam();
+  else if (e.code === 'KeyR' && !e.repeat) resetRun();
+  else if (e.code === 'Space' && !e.repeat && boostCd <= 0) {
+    boost = 0.65;
+    boostCd = 2.6;
+  }
+  if (e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp') keyUp = false;
+  else if (e.code === 'KeyS' || e.code === 'ArrowDown') keyDown = false;
+});
+function bindHold(el, set) {
+  el.addEventListener('pointerdown', (e) => {
+    set(true);
+    el.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  el.addEventListener('pointerup', () => set(false));
+  el.addEventListener('pointercancel', () => set(false));
+}
+bindHold(document.getElementById('gas'), (v) => { touchUp = v; });
+bindHold(document.getElementById('brake'), (v) => { touchDown = v; });
+addEventListener('blur', () => { keyUp = false; keyDown = false; touchUp = false; touchDown = false; });
+document.body.addEventListener('click', (e) => {
+  const node = e.target instanceof Element ? e.target : e.target.parentElement;
+  if (!node) return;
+  const el = node.closest('[data-act]');
+  if (!el) return;
+  const act = el.getAttribute('data-act');
+  if (act === 'start') begin(el.getAttribute('data-ch'));
+  else if (act === 'reset') resetRun();
+  else if (act === 'cam') cycleCam();
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = (now - last) * 0.001;
+  last = now;
+  if (dt > 0.04) dt = 0.04;
+  if (dt < 0) dt = 0;
+  const up = keyUp || touchUp;
+  const down = keyDown || touchDown;
+  if (up) throttle += dt * 0.75;
+  else if (down) throttle -= dt * 1.15;
+  else throttle -= dt * 0.2;
+  if (throttle < 0) throttle = 0;
+  if (throttle > 1) throttle = 1;
+  if (boost > 0) {
+    boost -= dt;
+    if (throttle < 1) throttle = 1;
+  }
+  if (boostCd > 0) boostCd -= dt;
+  const freeze = RR.ch === 'run' && (phase === 'clear' || phase === 'fail');
+  if (freeze) {
+    throttle = 0;
+    speed = 0;
+  }
+  const vmax = boost > 0 ? MAX_SPEED * 1.22 : MAX_SPEED;
+  speed += (throttle * vmax - speed) * (1 - Math.exp(-dt * 1.8));
+  if (speed < 0.02) speed = 0;
+  if (!freeze) {
+    t += (speed * dt) / curveLen;
+    if (RR.ch === 'run' && phase === 'live') {
+      if (t > 1) t = 1;
+    } else if (t >= 1) t -= 1;
+  }
+  if (t < 0) t = 0;
+  pose(t);
+  _m.makeBasis(_r, _n, _t);
+  car.quaternion.setFromRotationMatrix(_m);
+  car.position.copy(_p).addScaledVector(_n, 0.16);
+  const spin = wheelRadius > 0 ? (speed * dt) / wheelRadius : 0;
+  for (let i = 0; i < wheels.length; i++) wheels[i].rotation.x += spin;
+  const brake = down ? 1 : 0;
+  if (brake !== lastBrake && tailMat) {
+    lastBrake = brake;
+    tailMat.emissiveIntensity = brake ? 7 : 2.5;
+  }
+  const q = speed / MAX_SPEED;
+  const suction = _n.y < 0 ? -_n.y : 0;
+  const steep = _n.y < 1 ? 1 - _n.y : 0;
+  const instant = q * q * (900 + 2800 * suction + 900 * steep);
+  carry = Math.max(instant, carry * Math.exp(-dt / 2.4));
+  df = carry > 5000 ? 5000 : carry;
+  const horiz = Math.hypot(_t.x, _t.z) || 1e-6;
+  let pitch = Math.atan2(_t.y, horiz) * DEG;
+  if (_n.y < 0) pitch = (pitch >= 0 ? 180 : -180) - pitch;
+  const alt = _p.y * 3.28084;
+  const gforce = df / 1230;
+  if (mode === 2) controls.update();
+  else {
+    if (mode === 1) {
+      _cam.copy(_p).addScaledVector(_t, -6.2).addScaledVector(_n, 2.4);
+      _cam.x += 3.4;
+      _look.copy(_p).addScaledVector(_n, 0.45);
+    } else {
+      _cam.copy(fixedPos);
+      _look.copy(fixedLook);
+    }
+    const k = 1 - Math.exp(-dt * 3.2);
+    camera.position.lerp(_cam, k);
+    lookAt.lerp(_look, k);
+    camera.lookAt(lookAt);
+  }
+  stepChallenge(dt, alt);
+  const dfI = Math.round(df);
+  if (dfI !== shownDf) {
+    shownDf = dfI;
+    nDf.textContent = String(dfI);
+    gDf.style.setProperty('--p', (dfI / 50) + '%');
+  }
+  const pI = Math.round(pitch);
+  if (pI !== shownPitch) {
+    shownPitch = pI;
+    nPitch.textContent = String(pI);
+    const ap = pI < 0 ? -pI : pI;
+    gPitch.style.setProperty('--p', (ap / 1.8) + '%');
+  }
+  const aI = Math.round(alt);
+  if (aI !== shownAlt) {
+    shownAlt = aI;
+    nAlt.textContent = String(aI);
+    gAlt.style.setProperty('--p', (aI * 100 / 120) + '%');
+  }
+  const g10 = Math.round(gforce * 10);
+  if (g10 !== shownG) {
+    shownG = g10;
+    nG.textContent = (g10 / 10).toFixed(1);
+    gG.style.setProperty('--p', (g10 * 2) + '%');
+  }
+  const sAng = Math.round(Math.atan2(_t.y, -_t.z) * DEG);
+  if (sAng !== shownSil) {
+    shownSil = sAng;
+    sil.style.transform = 'rotate(' + sAng + 'deg)';
+  }
+  const th = Math.round(throttle * 40);
+  if (th !== shownTh) {
+    shownTh = th;
+    meterFill.style.width = (th * 2.5) + '%';
+  }
+  renderer.render(scene, camera);
+}
+
+try {
+  await renderer.init();
+  requestAnimationFrame(frame);
+  loadAssets();
+} catch (err) {}
+</script>
+</body>
+</html>
