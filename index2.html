@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>lightmap-lab v01 — micro room</title>
+<style>
+  html,body{margin:0;height:100%;background:#111;color:#ddd;font:14px/1.4 system-ui,sans-serif}
+  #c{display:block;width:100%;height:100%}
+  #hud{position:fixed;left:12px;top:12px;background:rgba(0,0,0,.65);padding:10px 12px;border-radius:8px;max-width:360px}
+  #hud code{color:#9cf}
+  button{margin-top:6px;margin-right:6px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div><b>lightmap-lab v01</b> · three r186</div>
+  <div id="stat">loading…</div>
+  <div>lightMap <code>channel=1</code> · <code>flipY=false</code> · linear</div>
+  <div>lights: none (baked only) · envMap: none</div>
+  <button id="toggleLm">toggle lightMap</button>
+  <button id="toggleAmb">toggle ambient 0.15</button>
+</div>
+<script type="module">
+// Prefer relative paths that work when served from project web/
+import * as THREE from '/threejs/three.js-r186/build/three.module.js';
+import { GLTFLoader } from '/threejs/three.js-r186/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from '/threejs/three.js-r186/examples/jsm/controls/OrbitControls.js';
+
+const canvas = document.getElementById('c');
+const stat = document.getElementById('stat');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1e);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 100);
+camera.position.set(3.2, 2.4, 3.6);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0.5, 0);
+controls.update();
+
+// Runtime lighting policy (bake-only baseline):
+// - no scene lights (lightMap is additive; extra lights double-light)
+// - no envMap for this diffuse bake proof
+// - optional ambient ONLY for debug when lightMap off
+let amb = null;
+let lightMapOn = true;
+const mats = [];
+
+const t0 = performance.now();
+const texLoader = new THREE.TextureLoader();
+const lightMap = await new Promise((res, rej) => {
+  texLoader.load('/lightmap-lab/v01/web/lightmap_512_web.png', res, undefined, rej);
+});
+lightMap.channel = 1; // TEXCOORD_1
+lightMap.flipY = false;
+lightMap.colorSpace = THREE.LinearSRGBColorSpace;
+lightMap.needsUpdate = true;
+
+const gltf = await new Promise((res, rej) => {
+  new GLTFLoader().load('/lightmap-lab/v01/gltf/micro_room.glb', res, undefined, rej);
+});
+const root = gltf.scene;
+root.traverse((o) => {
+  if (!o.isMesh) return;
+  const g = o.geometry;
+  // ensure uv1 exists: glTF second set often TEXCOORD_1 → attributes.uv1 in three
+  if (!g.attributes.uv1 && g.attributes.uv) {
+    // fallback copy if exporter only one set (should not for dual UV bake)
+    g.setAttribute('uv1', g.attributes.uv.clone());
+  }
+  const m = o.material;
+  if (Array.isArray(m)) {
+    m.forEach((mm) => wire(mm));
+  } else {
+    wire(m);
+  }
+});
+function wire(m) {
+  if (!m) return;
+  m.lightMap = lightMap;
+  m.lightMapIntensity = 1.0;
+  m.needsUpdate = true;
+  mats.push(m);
+}
+scene.add(root);
+const loadMs = (performance.now() - t0).toFixed(1);
+let frames = 0, fps = 0, last = performance.now();
+function tick(now) {
+  frames++;
+  if (now - last >= 1000) {
+    fps = frames;
+    frames = 0;
+    last = now;
+    const info = renderer.info;
+    stat.textContent = `load ${loadMs}ms · ${fps} fps · tris ${info.render.triangles} · calls ${info.render.calls} · lm ${lightMapOn ? 'ON' : 'OFF'}`;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+document.getElementById('toggleLm').onclick = () => {
+  lightMapOn = !lightMapOn;
+  mats.forEach((m) => { m.lightMap = lightMapOn ? lightMap : null; m.needsUpdate = true; });
+};
+document.getElementById('toggleAmb').onclick = () => {
+  if (!amb) {
+    amb = new THREE.AmbientLight(0xffffff, 0.15);
+    scene.add(amb);
+  } else {
+    scene.remove(amb);
+    amb = null;
+  }
+};
+
+// expose for console latency probes
+window.__lm = { THREE, scene, camera, renderer, lightMap, mats, loadMs: +loadMs };
+</script>
+</body>
+</html>
