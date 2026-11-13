@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07080a">
+<meta name="description" content="An exploded view of the Quake II railgun, rendered live in the browser: take it apart, charge it, fire it.">
+<meta name="htmx-config" content='{"history":false,"defaultTimeout":8000}'>
+<title>RAILGUN // EXPLODED VIEW</title>
+<link rel="modulepreload" href="js/xv-X2FE5ZZE.js">
+<link rel="modulepreload" href="js/chunk-J7RE34O7.js">
+<link rel="modulepreload" href="js/chunk-XFGNQ5XQ.js">
+<link rel="preload" href="assets/railgun.7b1a9a2a.glb.gz" as="fetch" crossorigin>
+<link rel="preload" href="assets/textures/detail_nor.a44e43a4.ktx2" as="fetch" crossorigin>
+<link rel="preload" href="assets/textures/detail_mask.cbea544a.ktx2" as="fetch" crossorigin>
+<link rel="preload" href="assets/textures/railgun_masks.e43b6caa.ktx2" as="fetch" crossorigin>
+<link rel="preload" href="assets/vendor/basis-7b7dd534/basis_transcoder.js" as="fetch" crossorigin>
+<link rel="preload" href="assets/vendor/basis-7b7dd534/basis_transcoder.wasm" as="fetch" crossorigin>
+<link rel="icon" href="data:,">
+<link rel="preload" href="assets/fonts/VT323-xv.7ed8cbb3.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/xv-46b6e268.css" data-xv-ui>
+<style>
+html, body { margin: 0; height: 100%; background: #07080a; overflow: hidden; }
+#xv-canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+#xv-canvas:focus-visible { outline: 1px solid #ff7a1a; outline-offset: -3px; }
+.xv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+.xv-fail { position: fixed; inset: 0; display: grid; place-content: center; margin: 0; padding: 24px; text-align: center;
+  font: 25px/21px "VT323 XV", ui-monospace, monospace; color: #cdb58a; background: #07080a; }
+.xv-fail b { display: block; margin-bottom: 8px; font-weight: 400; color: #e5533a; text-transform: uppercase; }
+.xv-fail button, .xv-fatal button { display: block; margin: 14px auto 0; padding: 6px 18px; font: inherit; color: #cdb58a; background: transparent; border: 1px solid #e5533a; cursor: pointer; text-transform: uppercase; }
+.xv-fail button:hover, .xv-fatal button:hover, .xv-fail button:focus-visible, .xv-fatal button:focus-visible { color: #ff7a1a; border-color: #ff7a1a; }
+.xv-fail button:focus-visible, .xv-fatal button:focus-visible { outline: 1px solid #ff7a1a; outline-offset: 2px; }
+.xv-fail, .xv-fatal { z-index: 30; }
+.xv-fatal { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); box-sizing: border-box; width: max-content; max-width: min(440px, calc(100vw - 32px)); padding: 18px 24px; text-align: center;
+  font: 25px/21px "VT323 XV", ui-monospace, monospace; color: #cdb58a; background: rgba(7, 8, 10, .94); border: 1px solid #e5533a; pointer-events: auto; }
+.xv-fatal b { display: block; margin-bottom: 6px; font-weight: 400; color: #e5533a; text-transform: uppercase; }
+.xv-fatal span { display: block; }
+.xv-fatal.is-top { left: 0; right: 0; top: 0; transform: none; width: auto; max-width: none; padding: 6px 12px; border-width: 0 0 1px; background: #07080a; pointer-events: none; }
+.xv-fatal.is-top b { display: inline; margin: 0; }
+.xv-fatal.is-top span { display: inline; }
+@media (max-width: 760px) { .xv-fatal.is-top span { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
+body:has(.xv-fatal:not(.is-top)) #xv-loading, html.xv-nogl #xv-loading { display: none; }
+html.xv-nogl .xv-fatal, html.xv-nogl #xv-ui { display: none; }
+#xv-ui:has(> #xv-info.is-open) ~ #xv-nogpu { visibility: hidden; }
+#xv-ui:has(> #xv-show:not([hidden])) ~ #xv-nogpu { display: none; }
+html:not(.xv-nogl) #xv-nogl { display: none; }
+html:not(.xv-nomod) #xv-nomod { display: none; }
+body:has(.xv-fatal:not(.is-top)) #xv-boot, html.xv-nogl #xv-boot, html.xv-nomod #xv-boot { display: none; }
+html:not(.xv-nogpu) #xv-nogpu, html.xv-nogl #xv-nogpu { display: none; }
+</style>
+<script>
+(function () {
+  var c = document.documentElement.classList;
+  if (/[?&]nohud(=|&|$)/.test(location.search)) c.add('xv-nohud');
+  if (!('gpu' in navigator)) {
+    c.add('xv-nogpu');
+    var t = document.createElement('canvas');
+    if (!t.getContext('webgl2')) c.add('xv-nogl');
+  }
+  addEventListener('error', function (e) {
+    var u = location.href.replace(/[?#].*$/, '').replace(/[^\/]*$/, 'js/');
+    if (e.filename && e.filename.indexOf(u) === 0 && !document.querySelector('#xv-ui > :not(#xv-boot)')) c.add('xv-nomod');
+  });
+})();
+</script>
+<noscript><style>#xv-boot { display: none; }</style></noscript>
+<script src="vendor/htmx-4.0.0.min.js" defer></script>
+<script type="module" src="js/xv-X2FE5ZZE.js" onerror="document.documentElement.classList.add('xv-nomod')"></script>
+</head>
+<body>
+<canvas id="xv-canvas" tabindex="0" role="application" aria-label="Railgun 3D view: drag to orbit, wheel to zoom, click a part to select it" aria-describedby="xv-canvas-hint"></canvas>
+<p id="xv-canvas-hint" class="xv-sr">ARROWS ORBIT · +/- ZOOM</p>
+<div id="xv-ui"><p id="xv-boot" class="xv-fail">LOADING...</p></div>
+<p id="xv-nogpu" class="xv-hud-note xv-hud" role="note">NO WEBGPU · USING WEBGL2</p>
+<div id="xv-nogl" class="xv-fail" role="alert"><p><b>No WebGPU, no WebGL2</b>This browser cannot draw the railgun.<br>Try a current Chrome, Edge, Firefox or Safari.</p></div>
+<div id="xv-nomod" class="xv-fail" role="alert"><p><b>The viewer failed to load</b>A script did not load. Check your connection, then reload. If you opened this file directly, serve it over HTTP instead.</p><button type="button" onclick="location.reload()">Reload</button></div>
+<noscript><div class="xv-fail"><p><b>JavaScript is off</b>The railgun is rendered live. Turn JavaScript on to take it apart.</p></div></noscript>
+</body>
+</html>
